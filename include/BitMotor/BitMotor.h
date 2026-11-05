@@ -11,6 +11,9 @@
 #include "BitMotor/Core/Files.h"
 #include "BitMotor/Core/Game.h"
 #include "BitMotor/Core/Log.h"
+#include "BitMotor/Core/Screen.h"
+#include "BitMotor/Core/Time.h"
+#include "BitMotor/Core/Window.h"
 
 #include "BitMotor/Math/Ease.h"
 #include "BitMotor/Math/Functions.h"

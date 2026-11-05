@@ -1,13 +1,15 @@
 #pragma once
 #include <string>
 
-// Starting a game (provisional in phase 0: opens the window and runs the loop until it is closed).
+// Starting a game.
 //     struct MyGame : BitMotor::Game {
-//         void Start() override { BitMotor::Log::Info("Hello"); }
+//         void Start() override { Log::Info("Hello"); }
+//         void Update() override { position += velocity * Time::Delta(); }   // TickRate times per second
+//         void Draw() override { Screen::Clear(Colors::Navy); }              // once per frame
 //     };
-//     int main() { return BitMotor::Run<MyGame>({.Title = "My game"}); }
+//     int main() { return BitMotor::Run<MyGame>({.Title = "My game", .Width = 320, .Height = 180}); }
 //
-// The window closes with Esc or its close button. `--frames N` on the command line quits after N frames
+// Until Input arrives, Esc also closes the window. `--frames N` on the command line quits after N frames
 // (used by the CI to run the examples without anyone closing them).
 namespace BitMotor {
 
@@ -15,8 +17,20 @@ struct Config {
     std::string Title = "BitMotor";
     // Together with Title, names the player's save folder (Files::SavePath).
     std::string Organization = "BitMotor";
+    // The game's own version, shown in the log at start ("1.2.0").
+    std::string Version;
+    // Logical resolution the game draws at, scaled to the window with black bars if the shape differs
+    // (Screen::Width/Height). 0: the window's size in pixels, no scaling.
+    int Width = 0;
+    int Height = 0;
+    // Window size at start, in pixels.
     int WindowWidth = 1280;
     int WindowHeight = 720;
+    bool Fullscreen = false;
+    bool VSync = true;
+    // Game::Update calls per second, with a fixed Time::Delta (deterministic: same input, same result).
+    // 0: one Update per frame with the real frame time.
+    int TickRate = 60;
 };
 
 // What each game implements. Phase 2 adds Services and Scenes around it.
@@ -24,6 +38,10 @@ class Game {
 public:
     virtual ~Game() = default;
     virtual void Start() {}
+    // Game logic, TickRate times per second (or once per frame if TickRate is 0).
+    virtual void Update() {}
+    // Drawing, once per frame. Time::Alpha() says how far it is between the last two Updates.
+    virtual void Draw() {}
     virtual void Stop() {}
 };
 
