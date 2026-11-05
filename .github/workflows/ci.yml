@@ -1,0 +1,122 @@
+# BitMotor CI.
+# - Pull requests (and manual runs): Linux (GCC and Clang) and Windows (MSVC).
+# - Pushes to main: Linux only, to save Actions minutes on a private repo (Windows counts double).
+# Each job builds Debug and Release, runs ctest (unit tests + examples with --frames 60).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+jobs:
+  linux:
+    name: Linux (${{ matrix.compiler }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+      SDL_VIDEODRIVER: offscreen
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: System packages (SDL3 build dependencies)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config autoconf automake autoconf-archive libtool libltdl-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+            libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev \
+            libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev libibus-1.0-dev libdbus-1-dev \
+            libudev-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdecor-0-dev
+
+      - name: vcpkg
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          mkdir -p "$VCPKG_DEFAULT_BINARY_CACHE"
+
+      - name: vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-linux-${{ matrix.compiler }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-linux-${{ matrix.compiler }}-
+
+      - name: Configure
+        run: cmake --preset ci-linux
+
+      - name: Build Debug
+        run: cmake --build --preset ci-linux-debug
+
+      - name: Test Debug
+        run: ctest --preset ci-linux-debug
+
+      - name: Build Release
+        run: cmake --build --preset ci-linux-release
+
+      - name: Test Release
+        run: ctest --preset ci-linux-release
+
+  windows:
+    name: Windows (MSVC)
+    if: github.event_name != 'push'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: lukka/get-cmake@latest
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      # The MSVC environment points VCPKG_ROOT at Visual Studio's own vcpkg: use the one cloned below.
+      - name: Use our vcpkg
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
+
+      - name: vcpkg
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/microsoft/vcpkg "$env:VCPKG_ROOT"
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+          New-Item -ItemType Directory -Force "$env:VCPKG_DEFAULT_BINARY_CACHE" | Out-Null
+
+      - name: vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-windows-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+          restore-keys: vcpkg-windows-
+
+      - name: Configure
+        run: cmake --preset ci-windows
+
+      - name: Build Debug
+        run: cmake --build --preset ci-windows-debug
+
+      - name: Test Debug
+        run: ctest --preset ci-windows-debug
+
+      - name: Build Release
+        run: cmake --build --preset ci-windows-release
+
+      - name: Test Release
+        run: ctest --preset ci-windows-release

@@ -1,0 +1,65 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    },
+    {
+      "name": "windows",
+      "inherits": "base",
+      "displayName": "Windows (Visual Studio 2022)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "linux",
+      "inherits": "base",
+      "displayName": "Linux (Ninja)",
+      "generator": "Ninja Multi-Config",
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+    {
+      "name": "ci-windows",
+      "inherits": "base",
+      "displayName": "CI Windows (Ninja + MSVC)",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "BITMOTOR_WARNINGS_AS_ERRORS": "ON"
+      },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+    },
+    {
+      "name": "ci-linux",
+      "inherits": "linux",
+      "displayName": "CI Linux",
+      "cacheVariables": { "BITMOTOR_WARNINGS_AS_ERRORS": "ON" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "windows-debug", "configurePreset": "windows", "configuration": "Debug" },
+    { "name": "windows-release", "configurePreset": "windows", "configuration": "Release" },
+    { "name": "linux-debug", "configurePreset": "linux", "configuration": "Debug" },
+    { "name": "linux-release", "configurePreset": "linux", "configuration": "Release" },
+    { "name": "ci-windows-debug", "configurePreset": "ci-windows", "configuration": "Debug" },
+    { "name": "ci-windows-release", "configurePreset": "ci-windows", "configuration": "Release" },
+    { "name": "ci-linux-debug", "configurePreset": "ci-linux", "configuration": "Debug" },
+    { "name": "ci-linux-release", "configurePreset": "ci-linux", "configuration": "Release" }
+  ],
+  "testPresets": [
+    { "name": "base", "hidden": true, "output": { "outputOnFailure": true } },
+    { "name": "windows-debug", "inherits": "base", "configurePreset": "windows", "configuration": "Debug" },
+    { "name": "windows-release", "inherits": "base", "configurePreset": "windows", "configuration": "Release" },
+    { "name": "linux-debug", "inherits": "base", "configurePreset": "linux", "configuration": "Debug" },
+    { "name": "linux-release", "inherits": "base", "configurePreset": "linux", "configuration": "Release" },
+    { "name": "ci-windows-debug", "inherits": "base", "configurePreset": "ci-windows", "configuration": "Debug" },
+    { "name": "ci-windows-release", "inherits": "base", "configurePreset": "ci-windows", "configuration": "Release" },
+    { "name": "ci-linux-debug", "inherits": "base", "configurePreset": "ci-linux", "configuration": "Debug" },
+    { "name": "ci-linux-release", "inherits": "base", "configurePreset": "ci-linux", "configuration": "Release" }
+  ]
+}
