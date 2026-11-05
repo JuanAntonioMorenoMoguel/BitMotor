@@ -1,11 +1,13 @@
 #include "BitMotor/Core/Game.h"
 
+#include "BitMotor/Core/Args.h"
 #include "BitMotor/Core/Log.h"
-#include "Core/CommandLine.h"
+#include "Core/EventsInternal.h"
+#include "Core/FilesInternal.h"
 
 #include <SDL3/SDL.h>
 
-#include <charconv>
+#include <chrono>
 
 namespace BitMotor {
 
@@ -15,16 +17,9 @@ bool QuitRequested = false;
 
 // `--frames N`: quit after N frames (0 = never).
 long long MaxFrames() {
-    auto args = Detail::CommandLine();
-    for (size_t i = 0; i + 1 < args.size(); ++i) {
-        if (args[i] != "--frames") continue;
-        long long frames = 0;
-        const std::string& value = args[i + 1];
-        auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), frames);
-        if (error == std::errc() && end == value.data() + value.size() && frames > 0) return frames;
-        Log::Warn("--frames needs a positive number, got '{}'", value);
-    }
-    return 0;
+    int frames = Args::Get("--frames", 0);
+    if (frames < 0) Log::Warn("--frames needs a positive number, got {}", frames);
+    return frames > 0 ? frames : 0;
 }
 
 } // namespace
@@ -55,17 +50,24 @@ int Run(const Config& config, Game& game) {
     }
     SDL_SetRenderVSync(renderer, 1);
 
+    Detail::SetIdentity(config.Organization, config.Title);
     const long long maxFrames = MaxFrames();
     QuitRequested = false;
     game.Start();
 
     long long frame = 0;
+    auto last = std::chrono::steady_clock::now();
     while (!QuitRequested) {
+        auto now = std::chrono::steady_clock::now();
+        double dt = std::chrono::duration<double>(now - last).count();
+        last = now;
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             if (event.type == SDL_EVENT_QUIT) QuitRequested = true;
             if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) QuitRequested = true;
         }
+        Detail::UpdateWatches(dt);
+        Detail::FlushEvents();
         SDL_SetRenderDrawColor(renderer, 24, 26, 36, 255);
         SDL_RenderClear(renderer);
         SDL_RenderPresent(renderer);

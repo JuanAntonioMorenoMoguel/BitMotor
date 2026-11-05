@@ -4,6 +4,11 @@
 
 #include "BitMotor/Version.h"
 
+#include "BitMotor/Core/Args.h"
+#include "BitMotor/Core/Data.h"
+#include "BitMotor/Core/Events.h"
+#include "BitMotor/Core/Fields.h"
+#include "BitMotor/Core/Files.h"
 #include "BitMotor/Core/Game.h"
 #include "BitMotor/Core/Log.h"
 

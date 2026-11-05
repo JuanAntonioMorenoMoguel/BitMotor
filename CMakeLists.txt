@@ -28,6 +28,7 @@ option(BITMOTOR_WARNINGS_AS_ERRORS "Treat warnings in BitMotor's own code as err
 set(BITMOTOR_STEAM_SDK "" CACHE PATH "Path to the Steamworks SDK (empty: local platform only). Used from phase 6")
 
 find_package(SDL3 CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 file(GLOB_RECURSE BITMOTOR_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
@@ -39,7 +40,7 @@ target_compile_features(BitMotor PUBLIC cxx_std_20)
 target_include_directories(BitMotor
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(BitMotor PRIVATE SDL3::SDL3)
+target_link_libraries(BitMotor PRIVATE SDL3::SDL3 nlohmann_json::nlohmann_json)
 if(WIN32)
     target_link_libraries(BitMotor PRIVATE shell32) # CommandLineToArgvW
 endif()

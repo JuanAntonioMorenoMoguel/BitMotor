@@ -4,7 +4,8 @@
 file(GLOB_RECURSE BITMOTOR_TEST_SOURCES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/*.h)
 add_executable(BitMotorTests ${BITMOTOR_TEST_SOURCES})
 target_link_libraries(BitMotorTests PRIVATE BitMotor::BitMotor)
-target_include_directories(BitMotorTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# ../src: the tests also reach BitMotor's internal Detail functions (SetArgs, SetSavePath...).
+target_include_directories(BitMotorTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR}/src)
 target_compile_definitions(BitMotorTests PRIVATE BITMOTOR_EXPECTED_VERSION="${PROJECT_VERSION}")
 _BitMotor_Warnings(BitMotorTests)
 add_test(NAME BitMotorTests COMMAND BitMotorTests)
