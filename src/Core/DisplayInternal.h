@@ -10,6 +10,7 @@ namespace BitMotor::Detail {
 void AttachDisplay(SDL_Window* window, SDL_Renderer* renderer, int logicalWidth, int logicalHeight, bool vsync);
 void SetFocused(bool focused);
 SDL_Renderer* CurrentRenderer();
+SDL_Window* CurrentWindow();
 
 // Where a logical screen of `logical` size sits inside a window of `window` pixels: as big as fits,
 // centred. A zero logical size fills the window.

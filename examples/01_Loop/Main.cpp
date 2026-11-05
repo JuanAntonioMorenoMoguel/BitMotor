@@ -40,6 +40,7 @@ struct LoopExample : Game {
     }
 
     void Update() override {
+        if (Input::KeyPressed(Key::Escape)) Quit();
         // Fixed step: Time::Delta() is always 1 / TickRate here.
         pulse += Time::Delta();
         if (hitTimer.Update()) {

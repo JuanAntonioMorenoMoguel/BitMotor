@@ -8,6 +8,7 @@
 #include "Core/DisplayInternal.h"
 #include "Core/EventsInternal.h"
 #include "Core/FilesInternal.h"
+#include "Core/InputInternal.h"
 #include "Core/TimeInternal.h"
 
 #include <SDL3/SDL.h>
@@ -27,16 +28,13 @@ long long MaxFrames() {
     return frames > 0 ? frames : 0;
 }
 
-// Window events become BitMotor events; the rest waits for Input (phase 1.4).
+// Window events become BitMotor events; keyboard, mouse and gamepads go to Input.
 void PollEvents() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
         case SDL_EVENT_QUIT:
             QuitRequested = true;
-            break;
-        case SDL_EVENT_KEY_DOWN:
-            if (event.key.key == SDLK_ESCAPE) QuitRequested = true; // provisional until Input
             break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
             Events::Emit(WindowResized{event.window.data1, event.window.data2});
@@ -62,7 +60,7 @@ void Quit() { QuitRequested = true; }
 namespace Detail {
 
 int Run(const Config& config, Game& game) {
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         Log::Error("SDL_Init: {}", SDL_GetError());
         return 1;
     }
@@ -89,6 +87,7 @@ int Run(const Config& config, Game& game) {
 
     SetIdentity(config.Organization, config.Title);
     ResetTime(config.TickRate);
+    StartInput();
     const long long maxFrames = MaxFrames();
     QuitRequested = false;
     Log::Info("{}{}{} (BitMotor {})", config.Title, config.Version.empty() ? "" : " ", config.Version, Version());
@@ -107,6 +106,7 @@ int Run(const Config& config, Game& game) {
         int updates = BeginFrame(realDt);
         for (int i = 0; i < updates && !QuitRequested; ++i) {
             BeginUpdate();
+            InputTick();
             game.Update();
         }
         FlushEvents();
@@ -122,6 +122,7 @@ int Run(const Config& config, Game& game) {
 
     game.Stop();
     FlushEvents();
+    StopInput();
     AttachDisplay(nullptr, nullptr, 0, 0, config.VSync);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

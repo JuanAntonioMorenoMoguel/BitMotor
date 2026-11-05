@@ -3,8 +3,8 @@
 A C++20 library to make simple games. It unifies nyiengilib and is the base that ProjectEGIDA, MONOCHROME and
 RogueInvasion will migrate to. The full design (modules, API and roadmap) is in [docs/BitMotor.md](docs/BitMotor.md).
 
-> **Status: phase 1 in progress.** Done: project skeleton (phase 0), Math, Colors, Args, Files, Data, Events,
-> the game loop, Time, Window and Screen. Next: Input. The modules arrive phase by phase (see the roadmap).
+> **Status: phase 1 done.** Project skeleton (phase 0) and the core: Math, Colors, Args, Files, Data, Events,
+> the game loop, Time, Window, Screen and Input. Next: phase 2 (Services, Scenes, Managers, Tasks, Settings).
 
 ## Building
 
