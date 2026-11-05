@@ -7,8 +7,9 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <shellapi.h>
 #include <windows.h>
+// shellapi.h needs windows.h first (separate block so clang-format does not reorder them).
+#include <shellapi.h>
 #else
 #include <fstream>
 #include <iterator>
