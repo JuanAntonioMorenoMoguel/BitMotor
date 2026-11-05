@@ -1,0 +1,14 @@
+# Same style as nyiengilib: 4 spaces, 120 columns, attached braces, short functions on one line.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 120
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AlwaysBreakTemplateDeclarations: No
+NamespaceIndentation: None
+FixNamespaceComments: true
+PointerAlignment: Left
+IncludeBlocks: Preserve
+SortIncludes: CaseSensitive
