@@ -42,7 +42,7 @@ jobs:
       - name: System packages (SDL3 build dependencies)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config autoconf automake autoconf-archive libtool \
+          sudo apt-get install -y ninja-build pkg-config autoconf automake autoconf-archive libtool libltdl-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
             libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev \
             libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev libibus-1.0-dev libdbus-1-dev \
@@ -86,6 +86,11 @@ jobs:
       - uses: lukka/get-cmake@latest
 
       - uses: ilammy/msvc-dev-cmd@v1
+
+      # The MSVC environment points VCPKG_ROOT at Visual Studio's own vcpkg: use the one cloned below.
+      - name: Use our vcpkg
+        shell: pwsh
+        run: echo "VCPKG_ROOT=${{ github.workspace }}\vcpkg" >> $env:GITHUB_ENV
 
       - name: vcpkg
         shell: pwsh
