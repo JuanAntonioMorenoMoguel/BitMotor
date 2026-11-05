@@ -6,3 +6,15 @@
 
 #include "BitMotor/Core/Game.h"
 #include "BitMotor/Core/Log.h"
+
+#include "BitMotor/Math/Ease.h"
+#include "BitMotor/Math/Functions.h"
+#include "BitMotor/Math/Matrix.h"
+#include "BitMotor/Math/Noise.h"
+#include "BitMotor/Math/Random.h"
+#include "BitMotor/Math/Shapes.h"
+#include "BitMotor/Math/Tween.h"
+#include "BitMotor/Math/Vector.h"
+
+#include "BitMotor/Colors/Color.h"
+#include "BitMotor/Colors/Colors.h"
