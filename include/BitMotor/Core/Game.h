@@ -9,8 +9,8 @@
 //     };
 //     int main() { return BitMotor::Run<MyGame>({.Title = "My game", .Width = 320, .Height = 180}); }
 //
-// Until Input arrives, Esc also closes the window. `--frames N` on the command line quits after N frames
-// (used by the CI to run the examples without anyone closing them).
+// The window's close button ends the game (Esc does nothing unless the game says so). `--frames N` on the
+// command line quits after N frames (used by the CI to run the examples without anyone closing them).
 namespace BitMotor {
 
 struct Config {

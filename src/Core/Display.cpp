@@ -11,7 +11,7 @@
 namespace BitMotor {
 
 namespace {
-SDL_Window* CurrentWindow = nullptr;
+SDL_Window* TheWindow = nullptr;
 SDL_Renderer* Renderer = nullptr;
 Vec2 LogicalSize;
 bool VSyncOn = true;
@@ -21,7 +21,7 @@ bool HasFocus = true;
 namespace Detail {
 
 void AttachDisplay(SDL_Window* window, SDL_Renderer* renderer, int logicalWidth, int logicalHeight, bool vsync) {
-    CurrentWindow = window;
+    TheWindow = window;
     Renderer = renderer;
     LogicalSize = {float(std::max(logicalWidth, 0)), float(std::max(logicalHeight, 0))};
     VSyncOn = vsync;
@@ -31,6 +31,7 @@ void AttachDisplay(SDL_Window* window, SDL_Renderer* renderer, int logicalWidth,
 void SetFocused(bool focused) { HasFocus = focused; }
 
 SDL_Renderer* CurrentRenderer() { return Renderer; }
+SDL_Window* CurrentWindow() { return TheWindow; }
 
 Rect Letterbox(Vec2 window, Vec2 logical) {
     if (logical.X <= 0 || logical.Y <= 0 || window.X <= 0 || window.Y <= 0) return {{0, 0}, window};
@@ -44,28 +45,28 @@ Rect Letterbox(Vec2 window, Vec2 logical) {
 namespace Window {
 
 void SetTitle(std::string_view title) {
-    if (CurrentWindow) SDL_SetWindowTitle(CurrentWindow, std::string(title).c_str());
+    if (TheWindow) SDL_SetWindowTitle(TheWindow, std::string(title).c_str());
 }
 
-std::string Title() { return CurrentWindow ? SDL_GetWindowTitle(CurrentWindow) : ""; }
+std::string Title() { return TheWindow ? SDL_GetWindowTitle(TheWindow) : ""; }
 
 Vec2 Size() {
     int width = 0, height = 0;
-    if (CurrentWindow) SDL_GetWindowSizeInPixels(CurrentWindow, &width, &height);
+    if (TheWindow) SDL_GetWindowSizeInPixels(TheWindow, &width, &height);
     return {float(width), float(height)};
 }
 
 void SetSize(int width, int height) {
-    if (CurrentWindow && !IsFullscreen()) SDL_SetWindowSize(CurrentWindow, width, height);
+    if (TheWindow && !IsFullscreen()) SDL_SetWindowSize(TheWindow, width, height);
 }
 
 void SetFullscreen(bool fullscreen) {
-    if (CurrentWindow) SDL_SetWindowFullscreen(CurrentWindow, fullscreen);
+    if (TheWindow) SDL_SetWindowFullscreen(TheWindow, fullscreen);
 }
 
 void ToggleFullscreen() { SetFullscreen(!IsFullscreen()); }
 
-bool IsFullscreen() { return CurrentWindow && (SDL_GetWindowFlags(CurrentWindow) & SDL_WINDOW_FULLSCREEN) != 0; }
+bool IsFullscreen() { return TheWindow && (SDL_GetWindowFlags(TheWindow) & SDL_WINDOW_FULLSCREEN) != 0; }
 
 void SetVSync(bool vsync) {
     VSyncOn = vsync;

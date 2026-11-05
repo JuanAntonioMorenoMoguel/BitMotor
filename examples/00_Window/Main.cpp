@@ -6,6 +6,9 @@ using namespace BitMotor;
 
 struct HelloWindow : Game {
     void Start() override { Log::Info("BitMotor {}: window open, press Esc to close it", Version()); }
+    void Update() override {
+        if (Input::KeyPressed(Key::Escape)) Quit();
+    }
     void Stop() override { Log::Info("Bye"); }
 };
 

@@ -10,6 +10,8 @@
 #include "BitMotor/Core/Fields.h"
 #include "BitMotor/Core/Files.h"
 #include "BitMotor/Core/Game.h"
+#include "BitMotor/Core/Input.h"
+#include "BitMotor/Core/Keys.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
 #include "BitMotor/Core/Time.h"

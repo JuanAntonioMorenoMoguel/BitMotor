@@ -2,8 +2,10 @@
 # They also run in the CI with `--frames 60`.
 BitMotor_Example(00_Window)
 BitMotor_Example(01_Loop)
+BitMotor_Example(02_Input)
 
 if(BITMOTOR_TESTS)
     add_test(NAME Example_00_Window COMMAND BitMotor_00_Window --frames 60)
     add_test(NAME Example_01_Loop COMMAND BitMotor_01_Loop --frames 120)
+    add_test(NAME Example_02_Input COMMAND BitMotor_02_Input --frames 120)
 endif()
