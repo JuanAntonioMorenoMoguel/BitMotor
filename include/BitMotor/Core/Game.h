@@ -13,6 +13,8 @@ namespace BitMotor {
 
 struct Config {
     std::string Title = "BitMotor";
+    // Together with Title, names the player's save folder (Files::SavePath).
+    std::string Organization = "BitMotor";
     int WindowWidth = 1280;
     int WindowHeight = 720;
 };
@@ -27,11 +29,16 @@ public:
 
 namespace Detail {
 int Run(const Config& config, Game& game);
-}
+void SetSourceDir(const char* folder);
+} // namespace Detail
 
 // Opens the window, calls Start, runs until the window closes or Quit() is called, and calls Stop.
 // Returns the exit code for main(): 0 if everything went well.
 template <class T> int Run(const Config& config = {}) {
+#ifdef BITMOTOR_SOURCE_DIR
+    // Defined by BitMotor_Prepare for the game: lets Files::AssetPath read from the source tree.
+    Detail::SetSourceDir(BITMOTOR_SOURCE_DIR);
+#endif
     T game;
     return Detail::Run(config, game);
 }
