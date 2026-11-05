@@ -18,7 +18,7 @@ struct Config {
     // Together with Title, names the player's save folder (Files::SavePath).
     std::string Organization = "BitMotor";
     // The game's own version, shown in the log at start ("1.2.0").
-    std::string Version;
+    std::string Version = "";
     // Logical resolution the game draws at, scaled to the window with black bars if the shape differs
     // (Screen::Width/Height). 0: the window's size in pixels, no scaling.
     int Width = 0;
