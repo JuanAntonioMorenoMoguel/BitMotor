@@ -25,7 +25,15 @@ ctest --preset linux-debug
 ```
 
 The build goes to `build/<preset>/`, the executables to `build/<preset>/bin/<Config>/`. On Linux, SDL3 needs the
-X11/Wayland development packages (see the list in `.github/workflows/ci.yml`).
+X11/Wayland development packages:
+
+```bash
+sudo apt-get install -y ninja-build pkg-config autoconf automake autoconf-archive libtool libltdl-dev \
+  libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+  libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev \
+  libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev libibus-1.0-dev libdbus-1-dev \
+  libudev-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdecor-0-dev
+```
 
 | Option | Default | What it does |
 |---|---|---|
