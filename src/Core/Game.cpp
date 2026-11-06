@@ -9,6 +9,8 @@
 #include "Core/EventsInternal.h"
 #include "Core/FilesInternal.h"
 #include "Core/InputInternal.h"
+#include "Core/ServicesInternal.h"
+#include "Core/TasksInternal.h"
 #include "Core/TimeInternal.h"
 
 #include <SDL3/SDL.h>
@@ -107,6 +109,8 @@ int Run(const Config& config, Game& game) {
         for (int i = 0; i < updates && !QuitRequested; ++i) {
             BeginUpdate();
             InputTick();
+            UpdateServices();
+            UpdateTasks();
             game.Update();
         }
         FlushEvents();
@@ -120,7 +124,9 @@ int Run(const Config& config, Game& game) {
         if (maxFrames > 0 && ++frame >= maxFrames) QuitRequested = true;
     }
 
+    ClearTasks();
     game.Stop();
+    StopServices(); // after the game's Stop, which may still use them
     FlushEvents();
     StopInput();
     AttachDisplay(nullptr, nullptr, 0, 0, config.VSync);
