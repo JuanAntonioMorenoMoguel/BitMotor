@@ -16,6 +16,7 @@
 #include "BitMotor/Core/Scenes.h"
 #include "BitMotor/Core/Screen.h"
 #include "BitMotor/Core/Services.h"
+#include "BitMotor/Core/Settings.h"
 #include "BitMotor/Core/Tasks.h"
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Core/Window.h"
