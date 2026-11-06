@@ -33,8 +33,9 @@ struct Config {
     int TickRate = 60;
 };
 
-// What each game implements. Start is the place to add the Services. Each Update runs after the Services
-// and the global Tasks have advanced.
+// What each game implements. Start is the place to add the Services and push the first Scene.
+// Each Update: Services, global Tasks, Game::Update, then the scenes. Each frame: the scenes draw, then
+// Game::Draw on top (global overlays). Without scenes, Game alone works as before.
 class Game {
 public:
     virtual ~Game() = default;

@@ -1,4 +1,5 @@
 #pragma once
+#include "BitMotor/Colors/Color.h"
 #include "BitMotor/Math/Shapes.h"
 
 struct SDL_Window;
@@ -15,5 +16,9 @@ SDL_Window* CurrentWindow();
 // Where a logical screen of `logical` size sits inside a window of `window` pixels: as big as fits,
 // centred. A zero logical size fills the window.
 Rect Letterbox(Vec2 window, Vec2 logical);
+
+// Covers the whole logical screen with `color`, blending by its alpha (scene fades). Provisional, with SDL's
+// renderer, until Renderer2D arrives in phase 3.
+void FillScreen(Color color);
 
 } // namespace BitMotor::Detail

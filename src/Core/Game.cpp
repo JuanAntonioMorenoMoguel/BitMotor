@@ -9,6 +9,7 @@
 #include "Core/EventsInternal.h"
 #include "Core/FilesInternal.h"
 #include "Core/InputInternal.h"
+#include "Core/ScenesInternal.h"
 #include "Core/ServicesInternal.h"
 #include "Core/TasksInternal.h"
 #include "Core/TimeInternal.h"
@@ -94,6 +95,7 @@ int Run(const Config& config, Game& game) {
     QuitRequested = false;
     Log::Info("{}{}{} (BitMotor {})", config.Title, config.Version.empty() ? "" : " ", config.Version, Version());
     game.Start();
+    ApplySceneChanges(); // the first scene enters before the first Update
 
     long long frame = 0;
     auto last = std::chrono::steady_clock::now();
@@ -112,18 +114,21 @@ int Run(const Config& config, Game& game) {
             UpdateServices();
             UpdateTasks();
             game.Update();
+            UpdateScenes();
         }
         FlushEvents();
 
         BeginDraw();
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
+        DrawScenes();
         game.Draw();
         SDL_RenderPresent(renderer);
 
         if (maxFrames > 0 && ++frame >= maxFrames) QuitRequested = true;
     }
 
+    ShutdownScenes();
     ClearTasks();
     game.Stop();
     StopServices(); // after the game's Stop, which may still use them
