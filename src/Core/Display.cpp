@@ -1,5 +1,6 @@
 // Window and Screen: both work on the window the loop opened.
 #include "BitMotor/Core/Screen.h"
+#include "BitMotor/Core/Settings.h"
 #include "BitMotor/Core/Window.h"
 
 #include "Core/DisplayInternal.h"
@@ -62,6 +63,7 @@ void SetSize(int width, int height) {
 
 void SetFullscreen(bool fullscreen) {
     if (TheWindow) SDL_SetWindowFullscreen(TheWindow, fullscreen);
+    Detail::CurrentSettings().Fullscreen = fullscreen; // Settings::Save keeps the player's choice
 }
 
 void ToggleFullscreen() { SetFullscreen(!IsFullscreen()); }
@@ -70,6 +72,7 @@ bool IsFullscreen() { return TheWindow && (SDL_GetWindowFlags(TheWindow) & SDL_W
 
 void SetVSync(bool vsync) {
     VSyncOn = vsync;
+    Detail::CurrentSettings().VSync = vsync;
     if (Renderer) SDL_SetRenderVSync(Renderer, vsync ? 1 : 0);
 }
 

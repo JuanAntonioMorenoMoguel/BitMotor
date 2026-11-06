@@ -3,6 +3,7 @@
 #include "BitMotor/Core/Args.h"
 #include "BitMotor/Core/Events.h"
 #include "BitMotor/Core/Log.h"
+#include "BitMotor/Core/Settings.h"
 #include "BitMotor/Core/Window.h"
 #include "BitMotor/Version.h"
 #include "Core/DisplayInternal.h"
@@ -11,6 +12,7 @@
 #include "Core/InputInternal.h"
 #include "Core/ScenesInternal.h"
 #include "Core/ServicesInternal.h"
+#include "Core/SettingsInternal.h"
 #include "Core/TasksInternal.h"
 #include "Core/TimeInternal.h"
 
@@ -67,8 +69,14 @@ int Run(const Config& config, Game& game) {
         Log::Error("SDL_Init: {}", SDL_GetError());
         return 1;
     }
+    // The save folder and the player's settings first, so the window opens in the mode they chose.
+    SetIdentity(config.Organization, config.Title);
+    SetSettingsDefaults(config.Fullscreen, config.VSync);
+    PreloadSettings();
+    const bool fullscreen = Settings::Get().Fullscreen, vsync = Settings::Get().VSync;
+
     SDL_WindowFlags flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-    if (config.Fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
+    if (fullscreen) flags |= SDL_WINDOW_FULLSCREEN;
     SDL_Window* window = SDL_CreateWindow(config.Title.c_str(), config.WindowWidth, config.WindowHeight, flags);
     if (!window) {
         Log::Error("SDL_CreateWindow: {}", SDL_GetError());
@@ -83,12 +91,11 @@ int Run(const Config& config, Game& game) {
         SDL_Quit();
         return 1;
     }
-    SDL_SetRenderVSync(renderer, config.VSync ? 1 : 0);
+    SDL_SetRenderVSync(renderer, vsync ? 1 : 0);
     if (config.Width > 0 && config.Height > 0)
         SDL_SetRenderLogicalPresentation(renderer, config.Width, config.Height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    AttachDisplay(window, renderer, config.Width, config.Height, config.VSync);
+    AttachDisplay(window, renderer, config.Width, config.Height, vsync);
 
-    SetIdentity(config.Organization, config.Title);
     ResetTime(config.TickRate);
     StartInput();
     const long long maxFrames = MaxFrames();
@@ -134,7 +141,8 @@ int Run(const Config& config, Game& game) {
     StopServices(); // after the game's Stop, which may still use them
     FlushEvents();
     StopInput();
-    AttachDisplay(nullptr, nullptr, 0, 0, config.VSync);
+    AttachDisplay(nullptr, nullptr, 0, 0, vsync);
+    ForgetSettings();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

@@ -6,7 +6,9 @@
 // - Pause: the game stays visible behind and frozen (DrawBelow). P resumes, Q goes back to the title.
 // - Game over (red): shows the score; back to the title after 3 s or with Enter.
 // - A Stats service counts the games played across launches (stats.json).
-// F11: fullscreen. Esc on the title: quit.
+// - Settings (settings.json): F11 toggles fullscreen and T shows the timer during a game; both are saved,
+//   so the next launch opens the same way. The game adds ShowTimer to the standard settings.
+// Esc on the title: quit.
 #include <BitMotor/BitMotor.h>
 
 #include <cmath>
@@ -27,6 +29,12 @@ struct Stats : Service {
     void Start() override { Saved = Data::Load<SavedStats>("stats.json").value_or(SavedStats{}); }
     void Stop() override { Data::Save("stats.json", Saved); }
 };
+
+// The standard settings plus this game's own.
+struct ExampleSettings : Settings {
+    bool ShowTimer = true;
+};
+BITMOTOR_FIELDS_EXTENDS(ExampleSettings, Settings, ShowTimer)
 
 struct Title;
 struct GameOver;
@@ -68,8 +76,12 @@ struct Play : Scene {
 
     void Draw() override {
         if (Countdown > 0) Screen::Clear(Colors::Slate);
-        Window::SetTitle(Countdown > 0 ? std::format("03_Scenes - {}...", Countdown)
-                                       : std::format("03_Scenes - {:.1f} s left", Get<Clock>().Left));
+        if (Countdown > 0)
+            Window::SetTitle(std::format("03_Scenes - {}...", Countdown));
+        else if (Settings::Get<ExampleSettings>().ShowTimer)
+            Window::SetTitle(std::format("03_Scenes - {:.1f} s left (T hides the timer)", Get<Clock>().Left));
+        else
+            Window::SetTitle("03_Scenes - playing (T shows the timer)");
     }
 };
 
@@ -136,13 +148,22 @@ struct ScenesExample : Game {
         Input::Bind(Action::Confirm, "confirm", {Key::Enter, Key::Space, Button::South});
         Input::Bind(Action::Pause, "pause", {Key::P, Button::Start});
         Input::Bind(Action::Quit, "quit", {Key::Escape, Button::Back});
+        Settings::Use<ExampleSettings>();
         Services::Add<Stats>();
         Scenes::Push(MakeScene<Title>());
     }
 
     // Global, whatever the scene.
     void Update() override {
-        if (Input::KeyPressed(Key::F11)) Window::ToggleFullscreen();
+        if (Input::KeyPressed(Key::F11)) {
+            Window::ToggleFullscreen(); // also updates Settings::Fullscreen
+            Settings::Save();
+        }
+        if (Input::KeyPressed(Key::T)) {
+            auto& settings = Settings::Get<ExampleSettings>();
+            settings.ShowTimer = !settings.ShowTimer;
+            Settings::Save();
+        }
     }
 };
 

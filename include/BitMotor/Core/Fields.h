@@ -1,4 +1,5 @@
 #pragma once
+#include <type_traits>
 
 // Lists the fields of a struct so that Data::Load, Data::Save and Document::Get can read and write it.
 // Write it after the struct, in the same namespace, naming the public fields to keep:
@@ -15,10 +16,23 @@
 // Renaming a field changes its name in the files: old saves lose that value (it goes back to its default).
 
 #define BITMOTOR_FIELDS(Type, ...)                                                                                     \
-    template <class Visitor> [[maybe_unused]] inline void BitMotorFields(Type& object, Visitor&& visit) {              \
+    template <class FieldsObject, class Visitor>                                                                       \
+        requires std::is_same_v<std::remove_const_t<FieldsObject>, Type>                                               \
+    [[maybe_unused]] inline void BitMotorFields(FieldsObject& object, Visitor&& visit) {                               \
         BITMOTOR_FIELDS_EXPAND(BITMOTOR_FIELDS_FOR_EACH(BITMOTOR_FIELDS_VISIT, __VA_ARGS__))                           \
-    }                                                                                                                  \
-    template <class Visitor> [[maybe_unused]] inline void BitMotorFields(const Type& object, Visitor&& visit) {        \
+    }
+
+// For a struct that inherits from another one with fields: the base's fields come first, then its own.
+//     struct MySettings : Settings { bool ShowTimer = false; };
+//     BITMOTOR_FIELDS_EXTENDS(MySettings, Settings, ShowTimer)
+// Each struct needs its own: a derived struct without one does not compile with Data (it is never saved as its
+// base by mistake, losing its own fields).
+#define BITMOTOR_FIELDS_EXTENDS(Type, Base, ...)                                                                       \
+    template <class FieldsObject, class Visitor>                                                                       \
+        requires std::is_same_v<std::remove_const_t<FieldsObject>, Type>                                               \
+    [[maybe_unused]] inline void BitMotorFields(FieldsObject& object, Visitor&& visit) {                               \
+        using FieldsBase = std::conditional_t<std::is_const_v<FieldsObject>, const Base, Base>;                        \
+        BitMotorFields(static_cast<FieldsBase&>(object), visit);                                                       \
         BITMOTOR_FIELDS_EXPAND(BITMOTOR_FIELDS_FOR_EACH(BITMOTOR_FIELDS_VISIT, __VA_ARGS__))                           \
     }
 

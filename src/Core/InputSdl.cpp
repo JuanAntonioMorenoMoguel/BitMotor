@@ -3,6 +3,7 @@
 #include "BitMotor/Core/Input.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
+#include "BitMotor/Core/Settings.h"
 #include "Core/DisplayInternal.h"
 #include "Core/InputInternal.h"
 
@@ -430,7 +431,10 @@ namespace Input {
 
 void Rumble(float low, float high, float seconds) {
     if (!ActivePad || seconds <= 0) return;
-    auto strength = [](float v) { return Uint16(std::clamp(v, 0.0f, 1.0f) * 65535.0f); };
+    // The player's Vibration setting scales both motors (0: no rumble at all).
+    const float scale = std::clamp(Settings::Get().Vibration, 0.0f, 1.0f);
+    if (scale <= 0) return;
+    auto strength = [scale](float v) { return Uint16(std::clamp(v, 0.0f, 1.0f) * scale * 65535.0f); };
     SDL_RumbleGamepad(ActivePad, strength(low), strength(high), Uint32(seconds * 1000.0f));
 }
 
