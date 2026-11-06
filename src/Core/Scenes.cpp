@@ -3,7 +3,7 @@
 #include "BitMotor/Core/Events.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Time.h"
-#include "Core/DisplayInternal.h"
+#include "Render/RendererInternal.h"
 #include "Core/ScenesInternal.h"
 
 #include <cstdlib>

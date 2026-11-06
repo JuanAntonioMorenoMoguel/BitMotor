@@ -29,17 +29,21 @@ set(BITMOTOR_STEAM_SDK "" CACHE PATH "Path to the Steamworks SDK (empty: local p
 
 find_package(SDL3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# stb (images): header-only. vcpkg puts it in include/, Linux distributions in include/stb/.
+find_path(BITMOTOR_STB_INCLUDE_DIR stb_image.h PATH_SUFFIXES stb REQUIRED)
 
 file(GLOB_RECURSE BITMOTOR_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.vert
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.frag
     ${CMAKE_CURRENT_SOURCE_DIR}/include/BitMotor/*.h)
 add_library(BitMotor STATIC ${BITMOTOR_SOURCES})
 add_library(BitMotor::BitMotor ALIAS BitMotor)
 target_compile_features(BitMotor PUBLIC cxx_std_20)
 target_include_directories(BitMotor
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${BITMOTOR_STB_INCLUDE_DIR})
 target_link_libraries(BitMotor PRIVATE SDL3::SDL3 nlohmann_json::nlohmann_json)
 if(WIN32)
     target_link_libraries(BitMotor PRIVATE shell32) # CommandLineToArgvW

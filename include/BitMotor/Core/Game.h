@@ -26,11 +26,16 @@ struct Config {
     // Window size at start, in pixels.
     int WindowWidth = 1280;
     int WindowHeight = 720;
+    // With Width/Height: grow the image only by whole steps (x2, x3...) so every pixel keeps the same
+    // size (pixel art). false: as big as fits, even if some pixels end up wider than others.
+    bool IntegerScaling = true;
     bool Fullscreen = false;
     bool VSync = true;
     // Game::Update calls per second, with a fixed Time::Delta (deterministic: same input, same result).
     // 0: one Update per frame with the real frame time.
     int TickRate = 60;
+    // PNG for the window and taskbar icon (relative: Files::AssetPath). Empty: the system's default.
+    std::string Icon = "";
 };
 
 // What each game implements. Start is the place to add the Services and push the first Scene.

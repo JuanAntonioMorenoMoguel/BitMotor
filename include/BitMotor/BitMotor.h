@@ -32,3 +32,5 @@
 
 #include "BitMotor/Colors/Color.h"
 #include "BitMotor/Colors/Colors.h"
+
+#include "BitMotor/Render/Texture.h"

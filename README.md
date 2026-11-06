@@ -81,6 +81,7 @@ int main() { return Run<MyGame>({.Title = "My game"}); }
 | `include/BitMotor/` | Public headers. `BitMotor.h` includes everything; one folder per module (`Core/`, ...) |
 | `src/` | Implementation, one folder per module. Third-party headers (SDL3...) never leak into the public ones |
 | `cmake/BitMotor.cmake` | `BitMotor_Prepare` and internal helpers |
+| `cmake/CompileShaders.cmake` | Turns BitMotor's own shaders (`src/Render/Shaders`) into `Compiled.h`, which is committed. Only needed after editing a shader: `cmake -P cmake/CompileShaders.cmake` (glslc or glslangValidator from the Vulkan SDK) |
 | `tests/` | Internal tests with a tiny framework (`TEST`, `CHECK`, `CHECK_EQ`, `CHECK_NEAR`). `BitMotorTests <filter>` runs only the tests whose name contains the filter |
 | `examples/` | One folder per example with a single `Main.cpp`. They also run in ctest with `--frames 60` |
 | `docs/` | Design document |
@@ -94,7 +95,8 @@ Everything lives in `namespace BitMotor`. Formatting with `.clang-format` (4 spa
 
 | Package | Version (vcpkg baseline `5d68747a`) | Used by |
 |---|---|---|
-| SDL3 | 3.4.20 | Window and events |
+| SDL3 | 3.4.20 | Window, events and the GPU (SDL_GPU on Vulkan) |
+| stb | 2024-07-29 | Reading and writing images (`Texture`, screenshots, the window icon) |
 | nlohmann-json | 3.12.0 | Reading and writing JSON in `Data` (never visible in BitMotor's headers) |
 
 More dependencies are added in the phase that needs them.

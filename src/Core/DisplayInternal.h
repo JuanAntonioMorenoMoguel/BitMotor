@@ -1,24 +1,20 @@
 #pragma once
-#include "BitMotor/Colors/Color.h"
 #include "BitMotor/Math/Shapes.h"
 
 struct SDL_Window;
-struct SDL_Renderer;
 
 namespace BitMotor::Detail {
 
 // The loop gives the window to Window and Screen after creating it (nullptr when it closes).
-void AttachDisplay(SDL_Window* window, SDL_Renderer* renderer, int logicalWidth, int logicalHeight, bool vsync);
+void AttachDisplay(SDL_Window* window, int logicalWidth, int logicalHeight, bool vsync, bool integerScaling);
 void SetFocused(bool focused);
-SDL_Renderer* CurrentRenderer();
 SDL_Window* CurrentWindow();
 
 // Where a logical screen of `logical` size sits inside a window of `window` pixels: as big as fits,
-// centred. A zero logical size fills the window.
-Rect Letterbox(Vec2 window, Vec2 logical);
-
-// Covers the whole logical screen with `color`, blending by its alpha (scene fades). Provisional, with SDL's
-// renderer, until Renderer2D arrives in phase 3.
-void FillScreen(Color color);
+// centred. `integer`: only whole scales (x1, x2...) and whole-pixel corners, unless the window is smaller
+// than the logical screen. A zero logical size fills the window.
+Rect Letterbox(Vec2 window, Vec2 logical, bool integer = false);
+// Letterbox with this game's logical size and Config::IntegerScaling.
+Rect ViewportFor(Vec2 window);
 
 } // namespace BitMotor::Detail
