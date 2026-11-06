@@ -33,7 +33,8 @@ struct Config {
     int TickRate = 60;
 };
 
-// What each game implements. Phase 2 adds Services and Scenes around it.
+// What each game implements. Start is the place to add the Services. Each Update runs after the Services
+// and the global Tasks have advanced.
 class Game {
 public:
     virtual ~Game() = default;

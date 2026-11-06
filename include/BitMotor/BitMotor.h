@@ -14,6 +14,8 @@
 #include "BitMotor/Core/Keys.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
+#include "BitMotor/Core/Services.h"
+#include "BitMotor/Core/Tasks.h"
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Core/Window.h"
 
