@@ -109,4 +109,15 @@ Vec2 ToWindow(Vec2 logical) {
 
 } // namespace Screen
 
+namespace Detail {
+
+void FillScreen(Color color) {
+    if (!Renderer || color.A <= 0) return;
+    SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColorFloat(Renderer, color.R, color.G, color.B, color.A);
+    SDL_RenderFillRect(Renderer, nullptr);
+}
+
+} // namespace Detail
+
 } // namespace BitMotor
