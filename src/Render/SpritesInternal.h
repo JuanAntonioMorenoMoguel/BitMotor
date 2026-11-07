@@ -1,5 +1,6 @@
 #pragma once
 #include "BitMotor/Render/Camera.h"
+#include "BitMotor/Render/Light.h"
 #include "BitMotor/Render/Sprite.h"
 #include "BitMotor/Render/Texture.h"
 
@@ -33,12 +34,28 @@ struct SpriteBatch {
     std::uint32_t First = 0, Count = 0;
 };
 
+// What the light shader reads for each light (std430, 32 bytes; see Shaders/Light.frag).
+struct LightInstance {
+    float X = 0, Y = 0, Height = 0, Radius = 0; // screen pixels
+    float R = 0, G = 0, B = 0, Unused = 0;      // colour times intensity
+};
+static_assert(sizeof(LightInstance) == 32);
+
+// The light as it goes to the GPU, seen through `camera`.
+LightInstance MakeLight(const Light2D& light, const Camera2D& camera);
+std::vector<LightInstance>& LightQueue();
+
+// The flash Screen::Flash started: its colour and how much of it is left (0..1), and the clock that fades it.
+Color FlashColor();
+float FlashAmount();
+void AdvanceFlash(float seconds);
+
 // The sprite as it goes to the GPU, seen through `camera` (nullptr: screen pixels, for the Hud).
 SpriteInstance MakeInstance(const Sprite2D& sprite, const Camera2D* camera);
 
 // This frame's queue (Draw adds to it, the renderer empties it).
 std::vector<QueuedSprite>& SpriteQueue();
-// Back to the default camera and an empty queue, at the start of each frame.
+// Back to the default camera and empty queues (sprites and lights), at the start of each frame.
 void ResetSprites();
 
 // Orders the queue by layer (World by depth, keeping the draw order on ties) and groups it into batches.

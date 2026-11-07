@@ -49,7 +49,7 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 `Filter { Nearest, Linear }`, `Texture { Load, FromPixels, Width, Height, Size, Full }`, `Atlas { Load, Sprite, Has, Animation, Socket }` (formato nyiengisprite), `Animation { Frame, Done, Duration, Fired }`.
 
 ### Obj 2D
-`Layer { Background, World, Glow, Overlay, Hud }`, `Sprite2D { Region, Position, Rotation, Scale, Origin, Color, Flip, Flash, Layer, Depth, Material }`, `Draw(Sprite2D)`, `Camera2D { Position, Zoom, Rotation, Viewport, AddShake, Trauma, ShakeOffset, ShakeAngle, Update, ToWorld, ToScreen }`, `SetCamera`, `Light2D`, `Lighting::SetAmbient, SetBloom`, `ParticleStyle`, `Particles { Emit, Update, Draw, Clear }`.
+`Layer { Background, World, Glow, Overlay, Hud }`, `Sprite2D { Region, Position, Rotation, Scale, Origin, Color, Flip, Flash, Layer, Depth, Material }`, `Draw(Sprite2D)`, `Camera2D { Position, Zoom, Rotation, Viewport, AddShake, Trauma, ShakeOffset, ShakeAngle, Update, ToWorld, ToScreen }`, `SetCamera`, `Light2D { Position, Height, Radius, Color, Intensity }`, `Screen::Draw(Light2D)`, `Lighting::Enable, SetAmbient, SetStepped, SetBloom`, `ScreenEffects { Vignette, Grain, Aberration, Saturation }`, `Screen::SetEffects, Flash`, `Texture::SetNormals` (atlas_n.png), `ParticleStyle`, `Particles { Emit, Update, Draw, Clear }`.
 
 ### UI (inmediata)
 `Rect, RectOutline, Circle, Line, Triangle, Polygon`, `Panel, Button, Toggle, Slider, Bar, Segments, Image, Tooltip, Prompt, BeginModal, EndModal, Hovered, Clicked, SetTheme, OnClick`.

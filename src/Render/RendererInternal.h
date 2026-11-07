@@ -38,6 +38,8 @@ struct TextureData {
     Filter Look = Filter::Nearest;
     std::vector<std::uint8_t> Pixels;
     SDL_GPUTexture* Gpu = nullptr;
+    // Its normal map (Texture::SetNormals), for the World layer's lighting. Empty: flat.
+    Texture Normals;
 
     TextureData();
     ~TextureData();

@@ -18,6 +18,7 @@ layout(set = 1, binding = 0) uniform Frame {
 layout(location = 0) out vec2 OutUv;
 layout(location = 1) out vec4 OutColor;
 layout(location = 2) out float OutFlash;
+layout(location = 3) out vec2 OutTurn; // rotation, flipped (1) or not (0): for the normal maps
 
 const vec2 Corners[6] = vec2[](vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 0), vec2(1, 1), vec2(0, 1));
 
@@ -45,4 +46,5 @@ void main() {
     OutUv = (s.B.xy + uvCorner * s.B.zw) / Texture.xy;
     OutColor = s.C;
     OutFlash = s.D.y;
+    OutTurn = vec2(s.D.x, flipped ? 1.0 : 0.0);
 }
