@@ -119,6 +119,8 @@ public:
 
     // A sub-object to read field by field. Missing: an empty Document (Has is false, Get gives fallbacks).
     Document Child(std::string_view key);
+    // The elements of an array field, to read one by one. Missing: none. Not an array: an error, and none.
+    std::vector<Document> List(std::string_view key);
     // Names of this object's fields, in file order. Counts all of them as read.
     std::vector<std::string> Keys();
     // Elements of this array (or values of this object), to read one by one.

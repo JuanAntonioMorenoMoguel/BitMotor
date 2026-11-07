@@ -173,6 +173,16 @@ Document Document::Child(std::string_view key) {
     return child;
 }
 
+std::vector<Document> Document::List(std::string_view key) {
+    Document field = Member(key);
+    if (field.Type() == Kind::Missing) return {};
+    if (field.Type() != Kind::Array) {
+        field.Mismatch("an array [...]");
+        return {};
+    }
+    return field.Items();
+}
+
 std::vector<std::string> Document::Keys() {
     std::vector<std::string> keys;
     if (!Node || !Detail::NodeOf(Node).is_object()) return keys;

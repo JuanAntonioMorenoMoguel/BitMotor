@@ -127,6 +127,20 @@ TEST(DataReportsUnknownFields) {
     CHECK_EQ(Log::Problems(), before + 1);
 }
 
+TEST(DataListsArrayFields) {
+    std::size_t before = Log::Problems();
+    Document doc = ParseDocument("waves.json", "{\n  \"Waves\": [{\"Count\": 3}, {\"Count\": 5}],\n  \"Boss\": 7\n}");
+    std::vector<Document> waves = doc.List("Waves");
+    CHECK_EQ(waves.size(), std::size_t(2));
+    CHECK_EQ(waves[1].Get("Count", 0), 5);
+    CHECK(doc.List("Extra").empty()); // missing: none, and no error
+    CHECK(doc.Ok());
+    CHECK(doc.List("Boss").empty()); // not an array
+    CHECK(!doc.Ok());
+    CHECK_EQ(Log::Problems(), before + 1);
+    CHECK_EQ(Log::Recent(0), std::string("[error] waves.json:3: 'Boss' should be an array [...]"));
+}
+
 TEST(DataBrokenJsonGivesALine) {
     std::size_t before = Log::Problems();
     Document doc = ParseDocument("broken.json", "{\n  \"A\": 1,\n  \"B\": \n}");
