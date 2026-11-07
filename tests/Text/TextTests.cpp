@@ -53,6 +53,19 @@ TEST(AtlasFontFallsBackToCapitals) {
     CHECK(!Font::FromAtlas(Atlas::Parse(R"({"sprites": {"tree": [0, 0, 8, 8, 0, 0]}})", Blank())));
 }
 
+TEST(DefaultFontReplacesThePixelOne) {
+    Atlas atlas = Atlas::Parse(R"({"sprites": {"f_65": [0, 0, 9, 9, 0, 0]}})", Blank());
+    Font big = Font::FromAtlas(atlas, {.Advance = 10});
+    CHECK(Font::Default() == Font::Pixel());
+    Font::SetDefault(big);
+    CHECK(Font::Default() == big);
+    CHECK_EQ(Text::Measure("AA").X, 19.0f); // an empty style draws with it
+    CHECK(!Font().Has(U'B'));
+    Font::SetDefault({});
+    CHECK(Font::Default() == Font::Pixel());
+    CHECK_EQ(Text::Measure("AA").X, 11.0f);
+}
+
 TEST(TextUtf8RoundTrips) {
     std::string text = "Año ¿qué? 漢 🎮";
     CHECK_EQ(Detail::Encode(Detail::Decode(text)), text);

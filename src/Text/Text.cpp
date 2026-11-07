@@ -24,7 +24,7 @@ struct Letter {
 };
 
 const Detail::FontData& FontOf(const TextStyle& style) {
-    return style.Font ? *style.Font.Internal() : *Font::Pixel().Internal();
+    return style.Font ? *style.Font.Internal() : *Font::Default().Internal(); // Default is kept alive by Font
 }
 
 // The style's Size after the player's TextScale, in whole steps.

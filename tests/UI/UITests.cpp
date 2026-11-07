@@ -270,6 +270,54 @@ TEST(TooltipsFollowThePointedWidget) {
     Fresh();
 }
 
+TEST(TintedWidgetsCarryTheirTooltip) {
+    Fresh();
+    Detail::InputMouseMove({20, 15});
+    std::size_t plain = 0;
+    Frame([&] { UI::FlatButton(First, "One", Colors::Gold, false); });
+    plain = Detail::SpriteQueue().size();
+    Frame([&] { UI::FlatButton(First, "One", Colors::Gold, false, "Not yet: no money"); });
+    CHECK(Detail::SpriteQueue().size() > plain); // disabled, it still says why
+    Frame([&] { UI::Button(Second, "Two", Colors::Gold, true, "Far away"); });
+    const std::size_t away = Detail::SpriteQueue().size();
+    Frame([&] { UI::Button(Second, "Two", Colors::Gold); });
+    CHECK_EQ(Detail::SpriteQueue().size(), away); // not pointed at: no tooltip
+    Frame([&] {
+        if (UI::Hovered(First)) UI::ShowTooltip("Mine");
+    });
+    CHECK(Detail::SpriteQueue().size() > 0);
+    Fresh();
+}
+
+TEST(KeyboardFocusCanBeTurnedOff) {
+    Fresh();
+    Detail::InputMouseMove({300, 300});
+    UI::SetKeyboardFocus(false);
+    bool pressed = false;
+    Frame([&] { UI::Button(First, "One"); });
+    Tap(Key::Enter);
+    Frame([&] { pressed = UI::Button(First, "One"); });
+    CHECK(!pressed);           // Enter is the game's
+    CHECK(UI::Pressed(Nav::Confirm)); // still readable
+    UI::SetKeyboardFocus(true);
+    Fresh();
+}
+
+TEST(NineSlicesKeepTheirCorners) {
+    Fresh();
+    Frame([&] { UI::NineSlice({10, 10, 40, 20}, Region{}, 4, Colors::Red); });
+    CHECK_EQ(Detail::SpriteQueue().size(), 0u); // no image: nothing
+    std::vector<std::uint8_t> pixels(12 * 12 * 4, 255);
+    Region image{Texture::FromPixels(12, 12, pixels), {0, 0, 12, 12}, {0, 0}, 1};
+    Frame([&] { UI::NineSlice({10, 10, 40, 20}, image, 4, Colors::Red); });
+    CHECK_EQ(Detail::SpriteQueue().size(), 9u);
+    bool corner = false;
+    for (const Detail::QueuedSprite& s : Detail::SpriteQueue())
+        if (s.Instance.X == 46 && s.Instance.Y == 26 && s.Instance.Width == 4 && s.Instance.Height == 4) corner = true;
+    CHECK(corner); // the bottom right corner, at its own size
+    Fresh();
+}
+
 TEST(UiIgnoresTheKeyThatFinishesARebind) {
     Fresh();
     Input::Bind(3, "jump", {Key::Space});
@@ -281,4 +329,141 @@ TEST(UiIgnoresTheKeyThatFinishesARebind) {
     CHECK(!pressed);
     CHECK_EQ(Input::KeyName(3), "Enter");
     Fresh();
+}
+
+namespace {
+
+// The colours of what the frame queued, in order.
+std::vector<Color> QueuedColors() {
+    std::vector<Color> colors;
+    for (const Detail::QueuedSprite& s : Detail::SpriteQueue())
+        colors.push_back({s.Instance.R, s.Instance.G, s.Instance.B, s.Instance.A});
+    return colors;
+}
+
+bool Queued(const Color& color) {
+    for (const Color& c : QueuedColors())
+        if (c == color) return true;
+    return false;
+}
+
+} // namespace
+
+TEST(TintedWidgetsTakeTheirColour) {
+    Fresh();
+    const Color amber = Color::Hex(0xFFB447);
+    Detail::InputMouseMove({200, 200});
+    Frame([&] { UI::Button(First, "SCRAM", amber); });
+    CHECK(Queued(amber));                            // frame and label
+    CHECK(!Queued(UI::GetTheme().TextHover));
+    Detail::InputMouseMove({20, 15});
+    Frame([&] { UI::Button(First, "SCRAM", amber); });
+    CHECK(Queued(UI::GetTheme().TextHover));         // pointed at: the hover colour
+    CHECK(Queued(amber.WithAlpha(0.18f)));           // and a faint fill inside
+    Frame([&] { UI::Button(First, "SCRAM", amber, false); });
+    CHECK(Queued(UI::GetTheme().Faint));
+    CHECK(!Queued(amber));
+    Frame([&] { UI::FlatButton(First, "+1000", amber); });
+    CHECK(Queued(amber.WithAlpha(0.25f)));
+    Detail::InputMouseMove({200, 200});
+    Frame([&] { UI::FlatButton(First, "+1000", amber); });
+    CHECK(Queued(amber.WithAlpha(0.7f)));            // the outline, dimmer when not pointed at
+}
+
+TEST(TintedPanelsDrawTheirTitle) {
+    Fresh();
+    UI::Theme theme;
+    theme.TitleTab = true;
+    UI::SetTheme(theme);
+    const Color green = Color::Hex(0x7DFF99);
+    Frame([&] { UI::Panel({10, 10, 100, 50}, "REACTOR", green); });
+    CHECK(Queued(green));
+    CHECK(Queued(theme.TitleBack)); // the title, over the tab
+    bool tab = false;
+    for (const Detail::QueuedSprite& s : Detail::SpriteQueue())
+        if (s.Instance.X == 15 && s.Instance.Y == 7 && s.Instance.Height == 9) tab = true;
+    CHECK(tab);
+    UI::SetTheme({});
+}
+
+TEST(DisabledWidgetsSwallowTheClick) {
+    Fresh();
+    bool below = false;
+    Click({20, 15});
+    Frame([&] {
+        UI::Button(First, "Off", false);
+        below = UI::Clicked(First);
+    });
+    CHECK(!below);
+}
+
+TEST(RightClicksAreTheirOwn) {
+    Fresh();
+    Detail::InputMouseMove({20, 15});
+    Detail::InputMouseButton(MouseButton::Right, true);
+    Detail::InputMouseButton(MouseButton::Right, false);
+    bool left = true, right = false, again = true;
+    Frame([&] {
+        left = UI::Clicked(First);
+        right = UI::RightClicked(First);
+        again = UI::RightClicked(First);
+    });
+    CHECK(!left);
+    CHECK(right);
+    CHECK(!again); // taken
+}
+
+TEST(ModalsTheGameDrawsItself) {
+    Fresh();
+    bool behind = false, inside = false;
+    const Rect ok{10, 60, 40, 12};
+    auto screen = [&] {
+        behind = UI::Button(First, "Behind");
+        UI::BeginModal();
+        inside = UI::Button(ok, "OK");
+        UI::EndModal();
+    };
+    Frame(screen);
+    Click({20, 15});
+    Frame(screen);
+    CHECK(!behind);
+    const std::size_t drawn = Detail::SpriteQueue().size();
+    Click({20, 65});
+    Frame(screen);
+    CHECK(inside);
+    CHECK_EQ(Detail::SpriteQueue().size(), drawn); // no shade, no window: only the buttons
+}
+
+TEST(SegmentsCanHaveTheirOwnBack) {
+    Fresh();
+    const Color back = Color::Hex(0x10201A);
+    Frame([&] { UI::Segments({0, 0, 15, 4}, 0.5f, Colors::Green, back); });
+    CHECK_EQ(Detail::SpriteQueue().size(), 4u); // 3 px blocks with a 1 px gap
+    CHECK(Queued(back));
+    Frame([&] { UI::Bar({0, 0, 100, 4}, 0.001f, Colors::Green); });
+    CHECK_EQ(Detail::SpriteQueue()[1].Instance.Width, 1.0f); // a sliver: not empty
+}
+
+TEST(LabelsSitInTheMiddleRow) {
+    Fresh();
+    // 7-pixel capitals in a 16-pixel button: 5 rows above them and 4 below (as nyiengilib did).
+    Frame([&] { UI::Button({0, 0, 60, 16}, "I", Colors::White); });
+    float top = 1e9f;
+    for (const Detail::QueuedSprite& s : Detail::SpriteQueue())
+        if (s.Instance.Height == 11) top = std::min(top, s.Instance.Y);
+    CHECK_EQ(top, 5.0f - 2.0f); // the glyph's image starts 2 rows above its capitals
+}
+
+TEST(ForcedMouseDrivesTheUi) {
+    Fresh();
+    Input::ForceMouse({20, 15});
+    CHECK(Input::MouseForced());
+    CHECK_EQ(Input::Mouse(), Vec2(20, 15));
+    Input::ForceMouseButton(MouseButton::Left, true);
+    Input::ForceMouseButton(MouseButton::Left, false);
+    bool pressed = false;
+    Frame([&] { pressed = UI::Button(First, "Bot"); });
+    CHECK(pressed);
+    Input::ReleaseMouse();
+    CHECK(!Input::MouseForced());
 }

@@ -135,6 +135,8 @@ int Run(const Config& config, Game& game, void (*setup)()) {
         auto now = std::chrono::steady_clock::now();
         double realDt = std::chrono::duration<double>(now - last).count();
         last = now;
+        // `--frames N` runs are the same every time, however slow the machine: each frame is 1/60 s.
+        if (maxFrames > 0) realDt = 1.0 / 60.0;
 
         PollEvents();
         InputFrame();
