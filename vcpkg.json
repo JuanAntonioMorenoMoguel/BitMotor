@@ -2,6 +2,10 @@
   "name": "bitmotor",
   "version": "0.0.1",
   "dependencies": [
+    {
+      "name": "imgui",
+      "features": ["sdl3-binding", "sdlgpu3-binding"]
+    },
     "miniaudio",
     "nlohmann-json",
     "sdl3",

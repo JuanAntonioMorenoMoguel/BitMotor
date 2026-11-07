@@ -50,10 +50,16 @@ public:
     // Drawing, once per frame. Time::Alpha() says how far it is between the last two Updates.
     virtual void Draw() {}
     virtual void Stop() {}
+    // The debug panel (F1, or --debug on the command line): Dear ImGui calls, once per frame while it is
+    // open. #include <imgui.h> in the game to write it.
+    //     void DebugPanel() override { ImGui::Begin("Game"); ImGui::SliderFloat("Speed", &speed, 0, 10); ImGui::End();
+    //     }
+    virtual void DebugPanel() {}
 };
 
 namespace Detail {
-int Run(const Config& config, Game& game);
+// `setup` runs once the GPU is ready, just before Game::Start (Run with a CustomRenderer uses it).
+int Run(const Config& config, Game& game, void (*setup)() = nullptr);
 void SetSourceDir(const char* folder);
 } // namespace Detail
 

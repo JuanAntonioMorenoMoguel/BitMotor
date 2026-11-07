@@ -63,7 +63,10 @@ Formatos: WAV, FLAC, MP3, OGG y `.bitmusic` (canciones de BitMusic, sintetizadas
 
 ### Gpu y shaders
 - `CustomRenderer { Init, Resize, Render, Shutdown }` (es un servicio). El motor sigue gestionando swapchain, ImGui, capturas y redimensionado.
-- `Gpu::Native()`, `LoadShader, CreatePipeline, CreateBuffer, Buffer::Upload / Readback, CreateTarget (PingPong), CreateCompute, SetGlobal`.
+- `Gpu::Native()`, `Shader::Load`, `Pipeline::Create`, `Buffer::Create`, `Buffer::Upload / Readback`, `Target::Create` (`PingPong`), `Gpu::SetGlobal`; compute en la fase 12.
+- `Run<Juego, Renderer>(config)`. `Frame`: `Begin/End` de pases (hasta 4 targets), `Bind`, `BindTexture`, `BindStorage`, `BindVertices/Indices`, `Push` (bloques 1..3; el 0 es `Gpu::Globals`), `Draw`, `DrawIndexed`, `Fullscreen` y `Draw2D` (los sprites, texto y UI de BitMotor encima).
+- `CustomRenderer.h` y `Gpu.h` no están en `BitMotor.h`: nombres como `Frame`, `Target` o `Buffer` no chocan con los del juego.
+- Panel de depuración: Dear ImGui, F1 o `--debug`; `Game::DebugPanel()` y `Scene::DebugPanel()`.
 - `Frame { Begin, End, Bind, Push, Draw, DrawIndexed, Fullscreen, Dispatch, Swapchain, Draw2D }`.
 - `Material2D { Load, With }`, `Renderer2D::AddPostPass, RemovePostPass, SetPostParam`, `ShaderRenderer(fragment)`.
 - `#include <BitMotor.glsl>` con uniforms estándar, recarga en caliente, errores en magenta, panel automático de parámetros y `BitMotor_Shaders()` en CMake.
