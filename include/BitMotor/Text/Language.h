@@ -1,5 +1,6 @@
 #pragma once
 #include <format>
+#include <functional>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -50,6 +51,11 @@ std::string Number(double value, int decimals = 0);
 std::string ShortNumber(double value);
 // 0.42 -> "42%".
 std::string Percent(double fraction, int decimals = 0);
+// Games written in their own language that translate by the original text (gettext style) instead of
+// by keys: every plain text that Text::Draw, Measure, Wrap, Layout, Paragraph and the UI widgets show goes
+// through `translate` first. Rich markup is left as it is. Empty function: no translation.
+//     Text::SetTranslator([&](std::string_view text) { return catalog.Lookup(text); });
+void SetTranslator(std::function<std::string(std::string_view)> translate);
 // Seconds as a clock: 65 -> "1:05", 3725 -> "1:02:05"; with hundredths, 65.32 -> "1:05.32".
 std::string Clock(double seconds, bool hundredths = false);
 

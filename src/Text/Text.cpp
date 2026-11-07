@@ -1,4 +1,5 @@
 #include "BitMotor/Text/Text.h"
+#include "BitMotor/Text/Language.h"
 
 #include "BitMotor/Colors/Colors.h"
 #include "BitMotor/Core/Settings.h"
@@ -37,8 +38,15 @@ float LineStep(const TextStyle& style, const Detail::FontData& font) {
     return style.LineHeight > 0 ? style.LineHeight : font.LineHeight;
 }
 
+std::function<std::string(std::string_view)> Translator; // Text::SetTranslator
+
 std::vector<Letter> PlainLetters(std::string_view text, Color color) {
     std::vector<Letter> letters;
+    std::string translated;
+    if (Translator && !text.empty()) {
+        translated = Translator(text);
+        text = translated;
+    }
     for (char32_t c : Detail::Decode(text)) letters.push_back({c, color, None});
     return letters;
 }
@@ -369,6 +377,8 @@ void Typewriter::Skip() {
 // ---------------------------------------------------------------- Text
 
 namespace Text {
+
+void SetTranslator(std::function<std::string(std::string_view)> translate) { Translator = std::move(translate); }
 
 Vec2 Measure(std::string_view text, const TextStyle& style, float width) {
     std::vector<Letter> letters = PlainLetters(text, style.Color);

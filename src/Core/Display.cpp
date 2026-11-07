@@ -119,6 +119,9 @@ void Screenshot(const std::filesystem::path& path) {
 
 Rect Viewport() { return Detail::ViewportFor(Window::Size()); }
 
+void SetIntegerScaling(bool integer) { BitMotor::IntegerScaling = integer; }
+bool IntegerScaling() { return BitMotor::IntegerScaling; }
+
 Vec2 ToLogical(Vec2 windowPixel) {
     Rect view = Viewport();
     if (view.Width <= 0 || view.Height <= 0) return windowPixel;
