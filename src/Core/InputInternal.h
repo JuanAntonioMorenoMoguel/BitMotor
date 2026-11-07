@@ -21,6 +21,14 @@ void InputPadAxis(PadAxis axis, float value);  // sticks -1..1 (+Y down), trigge
 void InputPadConnected(bool connected);
 // Before each Update: turns everything since the previous one into this Update's state.
 void InputTick();
+// Once per frame, before the Updates: the same for the frame (the UI reads it in Draw).
+void InputFrame();
+bool FrameDown(Control control);
+bool FramePressed(Control control);
+Vec2 FrameMouseDelta();
+float FrameWheel();
+// A Rebind took a control (or was cancelled) during this frame's events.
+bool RebindEndedThisFrame();
 
 // SDL side (InputSdl.cpp).
 void StartInput();

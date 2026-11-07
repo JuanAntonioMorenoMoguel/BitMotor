@@ -4,6 +4,7 @@
 #include "BitMotor/Core/Window.h"
 #include "BitMotor/Math/Functions.h"
 #include "Core/SettingsInternal.h"
+#include "Text/LanguageInternal.h"
 
 #include <cstdlib>
 
@@ -87,6 +88,7 @@ void Settings::Apply() {
     if (Window::VSync() != vsync) Window::SetVSync(vsync);
     s.Fullscreen = fullscreen;
     s.VSync = vsync;
+    Detail::ApplyLanguageSetting(s.Language);
 }
 
 bool Settings::Save() {

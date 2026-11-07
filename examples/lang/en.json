@@ -1,0 +1,39 @@
+{
+  "language": "English",
+  "text": {
+    "title": "BitMotor text",
+    "paragraph": "A paragraph wraps by itself inside its width. Tab: align it left, centred or right. + and -: text scale.",
+    "rich": "[gold]Rich[/] text: [red]colours[/], [sky blue][wave]waves[/][/] and [orange][shake]shaking![/][/]",
+    "score": "Score: {0}",
+    "short": "Short: {0}",
+    "percent": "Loaded: {0}",
+    "clock": "Time: {0}",
+    "hint": "L: language. Space: next line.",
+    "dialogue": {
+      "0": "Hello! I am a [gold]typewriter[/]. I write letter by letter, and I stop at the full stops.",
+      "1": "Press [sky blue]Space[/] to see the whole line at once, or to read the next one.",
+      "2": "Accents work too: ¿qué tal? ¡Olé! Ça va? Über… 100 €."
+    }
+  },
+  "ui": {
+    "title": "OPTIONS",
+    "master": "Master volume",
+    "music": "Music",
+    "sound": "Sounds",
+    "volume.tip": "Used by the audio of phase 5.",
+    "fullscreen": "Fullscreen",
+    "textscale": "Text: x{0}",
+    "language": "Language: {0}",
+    "language.tip": "Every lang/*.json file of the game.",
+    "save": "Save",
+    "reset": "Reset",
+    "quit": "Quit",
+    "saved": "Saved in settings.json",
+    "reset.title": "RESET",
+    "reset.ask": "Back to the default options?",
+    "yes": "Yes",
+    "no": "No",
+    "health": "Health",
+    "accept": "Accept"
+  }
+}

@@ -33,9 +33,16 @@
 #include "BitMotor/Colors/Color.h"
 #include "BitMotor/Colors/Colors.h"
 
-#include "BitMotor/Render/Texture.h"
 #include "BitMotor/Render/Atlas.h"
 #include "BitMotor/Render/Camera.h"
 #include "BitMotor/Render/Light.h"
 #include "BitMotor/Render/Particles.h"
 #include "BitMotor/Render/Sprite.h"
+#include "BitMotor/Render/Texture.h"
+
+#include "BitMotor/Text/Font.h"
+#include "BitMotor/Text/Language.h"
+#include "BitMotor/Text/Text.h"
+
+#include "BitMotor/UI/Shapes.h"
+#include "BitMotor/UI/UI.h"

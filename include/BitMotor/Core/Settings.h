@@ -39,9 +39,9 @@ struct Settings {
     float ScreenShake = 1;
     // false: softer white flashes (Sprite2D::Flash, phase 3), for players sensitive to them.
     bool Flashes = true;
-    // Multiplies the size of the text (phase 4).
+    // Multiplies the size of the text (TextStyle::Size), rounded to whole pixels. 0.5..3.
     float TextScale = 1;
-    // "en", "es"... Empty: the system language (phase 4).
+    // "en", "es"... (a file in lang/, see Tr). Empty: the system language.
     std::string Language;
 
     Settings() = default;
@@ -54,7 +54,7 @@ struct Settings {
     template <class T = Settings> static T& Use();
     // The current settings as `T`. Asking for a type that was not given to Use is an error (abort).
     template <class T = Settings> static T& Get();
-    // Puts the current values into effect: window mode, VSync; values out of range are corrected.
+    // Puts the current values into effect: window mode, VSync, language; values out of range are corrected.
     static void Apply();
     // Writes settings.json. false if it fails (logged).
     static bool Save();
