@@ -2,6 +2,7 @@
 #include "Testing.h"
 
 #include "BitMotor/Render/Atlas.h"
+#include "BitMotor/Text/Language.h"
 #include "Core/TimeInternal.h"
 #include "Render/SpritesInternal.h"
 #include "Text/FontInternal.h"
@@ -199,4 +200,16 @@ TEST(TypewriterShowsLettersOverTime) {
     line.Speed = 0; // everything at once
     line.Start("ABC");
     CHECK_EQ(line.Update(0.01f), 3);
+}
+
+TEST(TranslatorChangesThePlainText) {
+    // gettext style: the original text is the key.
+    Text::SetTranslator([](std::string_view text) { return text == "Hola" ? std::string("Hello there") : std::string(text); });
+    CHECK_EQ(Text::Measure("Hola").X, Text::Measure("Hello there").X);
+    std::vector<std::string> lines = Text::Wrap("Hola", 1000);
+    CHECK_EQ(lines.size(), size_t(1));
+    CHECK_EQ(lines[0], std::string("Hello there"));
+    CHECK_EQ(Text::Layout("Hola", {0, 0}).size(), Text::Layout("Hello there", {0, 0}).size());
+    Text::SetTranslator(nullptr);
+    CHECK(Text::Measure("Hola").X < Text::Measure("Hello there").X);
 }

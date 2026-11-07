@@ -36,3 +36,12 @@ TEST(ScreenWithoutWindowIsHarmless) {
     CHECK_EQ(Window::Title(), std::string());
     CHECK(!Window::IsFullscreen());
 }
+
+TEST(ScreenIntegerScalingChangesWhileRunning) {
+    const bool before = Screen::IntegerScaling();
+    Screen::SetIntegerScaling(false);
+    CHECK(!Screen::IntegerScaling());
+    Screen::SetIntegerScaling(true);
+    CHECK(Screen::IntegerScaling());
+    Screen::SetIntegerScaling(before);
+}

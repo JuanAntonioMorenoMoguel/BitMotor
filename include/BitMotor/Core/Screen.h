@@ -34,4 +34,9 @@ Vec2 ToWindow(Vec2 logical);
 // Where the logical screen sits inside the window, in window pixels.
 Rect Viewport();
 
+// Scaling by whole steps (black bars, every logical pixel the same size) or filling as much as fits.
+// Starts as Config::IntegerScaling; an options menu can change it while the game runs.
+void SetIntegerScaling(bool integer);
+bool IntegerScaling();
+
 } // namespace BitMotor::Screen
