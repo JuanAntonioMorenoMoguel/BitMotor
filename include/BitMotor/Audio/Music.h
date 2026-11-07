@@ -41,8 +41,9 @@ using MusicFunction = std::function<float(MusicState& state, float dt)>;
 
 // ---------------------------------------------------------------- the BitMusic format (.bitmusic)
 //
-// A song for BitMotor's synthesizer, as BitMusic saves it (BitMusic also imports and exports other formats;
-// BitMotor only reads this one). JSON, with these structs' fields:
+// A song for BitMotor's synthesizer, as BitMusic saves it (BitMusic imports and exports other formats too;
+// BitMotor only reads this one). docs/BitMusic.md is the full description of the format and of how it sounds.
+// It is JSON with these structs' fields:
 //     {
 //       "Format": "bitmusic", "Version": 1, "Bpm": 120, "Rows": 4, "Volume": 0.8, "Loop": 0,
 //       "Instruments": {
@@ -54,10 +55,10 @@ using MusicFunction = std::function<float(MusicState& state, float dt)>;
 //       },
 //       "Order": ["intro", "intro"]
 //     }
-// Rows: rows per beat (4: each row is a sixteenth note at 4/4). A track plays one note at a time; each entry
+// Rows: rows per beat (4: each row is a sixteenth note in 4/4). A track plays one note at a time; each entry
 // of Notes is one row: a note ("C4", "F#3", "Bb2", or a MIDI number "60") starts a note, ":0.5" after it
-// sets its volume ("C4:0.5"); "off" releases the note; "" (or "---", ".") keeps what was playing.
-// Track N of every pattern is the same channel, so a note may go on into the next pattern.
+// sets its volume ("C4:0.5"); "off" releases it; "" (or "---", ".") keeps what was playing.
+// Track N of every pattern is the same channel, so a note goes on into the next pattern.
 // Loop: the position in Order the song goes back to when it ends (-1: it stops).
 
 struct Instrument {
@@ -109,7 +110,7 @@ struct Song {
     // Reads a .bitmusic file (relative paths: Files::AssetPath). nullopt if it cannot be read (logged).
     static std::optional<Song> Load(const std::filesystem::path& path);
     static std::optional<Song> Parse(std::string_view json, std::string_view name = "song");
-    // Writes it (relative paths: Files::SavePath; BitMusic saves where the user chooses).
+    // Writes it as JSON (relative paths: Files::SavePath).
     bool Save(const std::filesystem::path& path) const;
     // Seconds of one pass through Order.
     double Duration() const;

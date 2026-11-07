@@ -12,7 +12,7 @@
 //         return Synth::Square(v.Advance(0, 880, dt)) * Synth::Fall(u) * 0.25f;
 //     });
 //     jump.Play();
-//     blip.Play(0.8f, Random.Range(0.9f, 1.1f), -0.5f);        // volume, pitch, pan (left -1 .. right 1)
+//     blip.Play(0.8f, random.Range(0.9f, 1.1f), -0.5f);        // volume, pitch, pan (left -1 .. right 1)
 //
 // Each sound plays at most MaxVoices copies at once (the oldest one stops for a new one), so a hundred
 // coins picked up in one frame do not deafen anyone. Everything is mixed on the audio thread: synthesized

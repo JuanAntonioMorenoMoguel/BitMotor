@@ -1,0 +1,38 @@
+{
+  "Format": "bitmusic",
+  "Version": 1,
+  "Bpm": 128,
+  "Rows": 4,
+  "Volume": 0.6,
+  "Loop": 0,
+  "Instruments": {
+    "kick": {"Wave": "sine", "Volume": 0.75, "Attack": 0, "Decay": 0.18, "Sustain": 0, "Release": 0, "Sweep": -24, "SweepTime": 0.06},
+    "hat": {"Wave": "noise", "Volume": 0.18, "Attack": 0, "Decay": 0.04, "Sustain": 0, "Release": 0},
+    "bass": {"Wave": "triangle", "Volume": 0.55, "Attack": 0.005, "Decay": 0.12, "Sustain": 0.6, "Release": 0.05},
+    "lead": {"Wave": "square", "Width": 0.25, "Volume": 0.22, "Attack": 0.01, "Decay": 0.1, "Sustain": 0.7, "Release": 0.12, "LowPass": 0.35, "Pan": -0.3},
+    "echo": {"Wave": "square", "Width": 0.125, "Volume": 0.1, "Attack": 0.01, "Decay": 0.2, "Sustain": 0.4, "Release": 0.2, "Crush": 8, "Downsample": 2, "Pan": 0.4, "Transpose": 12}
+  },
+  "Patterns": {
+    "a": {
+      "Length": 16,
+      "Tracks": [
+        {"Instrument": "kick", "Notes": ["C3", "", "", "", "C3", "", "", "", "C3", "", "", "", "C3", "", "", ""]},
+        {"Instrument": "hat", "Notes": ["", "", "C7:0.6", "", "", "", "C7", "", "", "", "C7:0.6", "", "", "", "C7", "C7:0.4"]},
+        {"Instrument": "bass", "Notes": ["C2", "", "C3", "", "C2", "", "C3", "", "A1", "", "A2", "", "G1", "", "G2", ""]},
+        {"Instrument": "lead", "Notes": ["E4", "", "G4", "", "C5", "", "", "B4", "", "G4", "", "", "A4", "", "G4", "off"]},
+        {"Instrument": "echo", "Notes": ["", "", "E4", "", "G4", "", "C5", "", "", "B4", "", "G4", "", "", "A4", ""]}
+      ]
+    },
+    "b": {
+      "Length": 16,
+      "Tracks": [
+        {"Instrument": "kick", "Notes": ["C3", "", "", "", "C3", "", "", "", "C3", "", "", "C3:0.6", "C3", "", "", ""]},
+        {"Instrument": "hat", "Notes": ["", "", "C7:0.6", "", "", "", "C7", "", "", "", "C7:0.6", "", "C7:0.4", "", "C7", "C7"]},
+        {"Instrument": "bass", "Notes": ["F1", "", "F2", "", "F1", "", "F2", "", "G1", "", "G2", "", "G1", "", "B1", ""]},
+        {"Instrument": "lead", "Notes": ["A4", "", "C5", "", "F5", "", "E5", "", "D5", "", "B4", "", "G4", "", "", "off"]},
+        {"Instrument": "echo", "Notes": ["", "", "A4", "", "C5", "", "F5", "", "E5", "", "D5", "", "B4", "", "G4", ""]}
+      ]
+    }
+  },
+  "Order": ["a", "a", "b", "b"]
+}
