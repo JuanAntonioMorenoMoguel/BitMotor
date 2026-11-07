@@ -3,27 +3,32 @@
 #include "BitMotor/Core/Settings.h"
 #include "BitMotor/Core/Window.h"
 
+#include "BitMotor/Core/Data.h"
+#include "BitMotor/Core/Log.h"
 #include "Core/DisplayInternal.h"
+#include "Render/RendererInternal.h"
 
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
+#include <format>
 
 namespace BitMotor {
 
 namespace {
 SDL_Window* TheWindow = nullptr;
-SDL_Renderer* Renderer = nullptr;
 Vec2 LogicalSize;
 bool VSyncOn = true;
+bool IntegerScaling = true;
 bool HasFocus = true;
 } // namespace
 
 namespace Detail {
 
-void AttachDisplay(SDL_Window* window, SDL_Renderer* renderer, int logicalWidth, int logicalHeight, bool vsync) {
+void AttachDisplay(SDL_Window* window, int logicalWidth, int logicalHeight, bool vsync, bool integerScaling) {
     TheWindow = window;
-    Renderer = renderer;
+    IntegerScaling = integerScaling;
     LogicalSize = {float(std::max(logicalWidth, 0)), float(std::max(logicalHeight, 0))};
     VSyncOn = vsync;
     HasFocus = true;
@@ -31,15 +36,22 @@ void AttachDisplay(SDL_Window* window, SDL_Renderer* renderer, int logicalWidth,
 
 void SetFocused(bool focused) { HasFocus = focused; }
 
-SDL_Renderer* CurrentRenderer() { return Renderer; }
 SDL_Window* CurrentWindow() { return TheWindow; }
 
-Rect Letterbox(Vec2 window, Vec2 logical) {
+Rect Letterbox(Vec2 window, Vec2 logical, bool integer) {
     if (logical.X <= 0 || logical.Y <= 0 || window.X <= 0 || window.Y <= 0) return {{0, 0}, window};
     float scale = std::min(window.X / logical.X, window.Y / logical.Y);
+    if (integer && scale >= 1) {
+        scale = std::floor(scale);
+        Vec2 size = logical * scale;
+        Vec2 corner = (window - size) * 0.5f;
+        return {{std::floor(corner.X), std::floor(corner.Y)}, size};
+    }
     Vec2 size = logical * scale;
     return {(window - size) * 0.5f, size};
 }
+
+Rect ViewportFor(Vec2 window) { return Letterbox(window, LogicalSize, IntegerScaling); }
 
 } // namespace Detail
 
@@ -73,7 +85,7 @@ bool IsFullscreen() { return TheWindow && (SDL_GetWindowFlags(TheWindow) & SDL_W
 void SetVSync(bool vsync) {
     VSyncOn = vsync;
     Detail::CurrentSettings().VSync = vsync;
-    if (Renderer) SDL_SetRenderVSync(Renderer, vsync ? 1 : 0);
+    Detail::SetRendererVSync(vsync);
 }
 
 bool VSync() { return VSyncOn; }
@@ -89,13 +101,23 @@ float Width() { return Size().X; }
 float Height() { return Size().Y; }
 Vec2 Center() { return Size() * 0.5f; }
 
-void Clear(Color color) {
-    if (!Renderer) return;
-    SDL_SetRenderDrawColorFloat(Renderer, color.R, color.G, color.B, color.A);
-    SDL_RenderClear(Renderer);
+void Clear(Color color) { Detail::ClearScreen(color); }
+
+void Screenshot(const std::filesystem::path& path) {
+    std::filesystem::path file = path;
+    if (file.empty()) {
+        SDL_Time now = 0;
+        SDL_DateTime t{};
+        if (SDL_GetCurrentTime(&now) && SDL_TimeToDateTime(now, &t, true))
+            file = std::format("Screenshots/{:04}-{:02}-{:02}_{:02}-{:02}-{:02}.png", t.year, t.month, t.day, t.hour,
+                               t.minute, t.second);
+        else
+            file = "Screenshots/Screenshot.png";
+    }
+    Detail::RequestScreenshot(Detail::SaveFilePath(file));
 }
 
-Rect Viewport() { return Detail::Letterbox(Window::Size(), Size()); }
+Rect Viewport() { return Detail::ViewportFor(Window::Size()); }
 
 Vec2 ToLogical(Vec2 windowPixel) {
     Rect view = Viewport();
@@ -111,16 +133,5 @@ Vec2 ToWindow(Vec2 logical) {
 }
 
 } // namespace Screen
-
-namespace Detail {
-
-void FillScreen(Color color) {
-    if (!Renderer || color.A <= 0) return;
-    SDL_SetRenderDrawBlendMode(Renderer, SDL_BLENDMODE_BLEND);
-    SDL_SetRenderDrawColorFloat(Renderer, color.R, color.G, color.B, color.A);
-    SDL_RenderFillRect(Renderer, nullptr);
-}
-
-} // namespace Detail
 
 } // namespace BitMotor

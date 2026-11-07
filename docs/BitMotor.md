@@ -24,7 +24,7 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 ## Módulos y API
 
 ### Core
-- **Arranque:** `Config { Title, Width, Height, WindowWidth, WindowHeight, Fullscreen, VSync, TickRate, Icon, Organization, Version, SteamAppId, Renderer }`, `Run<T>(Config)`, `Run<Game, Renderer>`, `Quit()`, `Game { Start, Stop, DebugPanel }`.
+- **Arranque:** `Config { Title, Width, Height, WindowWidth, WindowHeight, IntegerScaling, Fullscreen, VSync, TickRate, Icon, Organization, Version, SteamAppId, Renderer }`, `Run<T>(Config)`, `Run<Game, Renderer>`, `Quit()`, `Game { Start, Stop, DebugPanel }`.
 - **Services:** `Service { Start, Update, Stop }`, `Services::Add<T>, Get<T>, Find<T>, Has<T>, Remove<T>`.
 - **Scenes:** `Scene { Enter, Exit, Resume, Update, Draw, UpdateBelow, DrawBelow, Add<T>, Get<T>, Run(Sequence) }`, `MakeScene<T>(args)`, `Scenes::Push, Pop, Replace, Clear, Current`, `Transition::None / Fade`.
 - **Managers:** `Manager { Start, Update, Draw, Stop, Owner, Active }` (se actualizan en orden de alta).
@@ -46,7 +46,7 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 `Sound { Load, Synth, Play(volume, pitch, pan), SetMaxVoices }`, `Voice { Advance, … }`, `Music { Play, Procedural, Stop, IsPlaying, SetParam, Beat, Pulse }`, `Audio::SetVolume(Bus), SetPaused`, `Synth::Sine, Square, Saw, Triangle, Noise, LowPass, HighPass, Bitcrush, Fall, AttackRelease, Decay, NoteToHz`.
 
 ### Textures
-`Texture { Load, Width, Height, Full }`, `Atlas { Load, Sprite, Has, Animation, Socket }` (formato nyiengisprite), `Animation { Frame, Done, Duration, Fired }`.
+`Filter { Nearest, Linear }`, `Texture { Load, FromPixels, Width, Height, Size, Full }`, `Atlas { Load, Sprite, Has, Animation, Socket }` (formato nyiengisprite), `Animation { Frame, Done, Duration, Fired }`.
 
 ### Obj 2D
 `Layer { Background, World, Glow, Overlay, Hud }`, `Sprite2D { Region, Position, Rotation, Scale, Origin, Color, Flip, Flash, Layer, Depth, Material }`, `Draw(Sprite2D)`, `Camera2D { Position, Zoom, Rotation, Viewport, AddShake, Trauma, ShakeOffset, ShakeAngle, Update, ToWorld, ToScreen }`, `SetCamera`, `Light2D`, `Lighting::SetAmbient, SetBloom`, `ParticleStyle`, `Particles { Emit, Update, Draw, Clear }`.

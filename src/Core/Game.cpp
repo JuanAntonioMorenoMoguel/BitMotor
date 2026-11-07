@@ -3,6 +3,7 @@
 #include "BitMotor/Core/Args.h"
 #include "BitMotor/Core/Events.h"
 #include "BitMotor/Core/Log.h"
+#include "BitMotor/Core/Screen.h"
 #include "BitMotor/Core/Settings.h"
 #include "BitMotor/Core/Window.h"
 #include "BitMotor/Version.h"
@@ -15,10 +16,13 @@
 #include "Core/SettingsInternal.h"
 #include "Core/TasksInternal.h"
 #include "Core/TimeInternal.h"
+#include "Render/ImageInternal.h"
+#include "Render/RendererInternal.h"
 
 #include <SDL3/SDL.h>
 
 #include <chrono>
+#include <filesystem>
 
 namespace BitMotor {
 
@@ -58,6 +62,17 @@ void PollEvents() {
     }
 }
 
+// Config::Icon on the window. A missing or broken file only logs an error.
+void SetIcon(SDL_Window* window, const std::string& icon) {
+    if (icon.empty()) return;
+    Detail::Image image = Detail::LoadImage(icon);
+    if (!image) return;
+    SDL_Surface* surface =
+        SDL_CreateSurfaceFrom(image.Width, image.Height, SDL_PIXELFORMAT_RGBA32, image.Pixels.data(), image.Width * 4);
+    if (!surface || !SDL_SetWindowIcon(window, surface)) Log::Warn("Window icon {}: {}", icon, SDL_GetError());
+    SDL_DestroySurface(surface);
+}
+
 } // namespace
 
 void Quit() { QuitRequested = true; }
@@ -83,22 +98,21 @@ int Run(const Config& config, Game& game) {
         SDL_Quit();
         return 1;
     }
-    // Provisional: SDL's 2D renderer until Renderer2D arrives in phase 3.
-    SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
-    if (!renderer) {
-        Log::Error("SDL_CreateRenderer: {}", SDL_GetError());
+    SetIcon(window, config.Icon);
+    AttachDisplay(window, config.Width, config.Height, vsync, config.IntegerScaling);
+    if (!StartRenderer(window, vsync)) {
+        AttachDisplay(nullptr, 0, 0, vsync, config.IntegerScaling);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return 1;
     }
-    SDL_SetRenderVSync(renderer, vsync ? 1 : 0);
-    if (config.Width > 0 && config.Height > 0)
-        SDL_SetRenderLogicalPresentation(renderer, config.Width, config.Height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    AttachDisplay(window, renderer, config.Width, config.Height, vsync);
 
     ResetTime(config.TickRate);
     StartInput();
     const long long maxFrames = MaxFrames();
+    // `--screenshot file.png`: the last frame of a `--frames N` run (relative to the current folder).
+    const std::string lastShot = Args::Get("--screenshot");
+    if (!lastShot.empty() && maxFrames == 0) Log::Warn("--screenshot needs --frames N");
     QuitRequested = false;
     Log::Info("{}{}{} (BitMotor {})", config.Title, config.Version.empty() ? "" : " ", config.Version, Version());
     game.Start();
@@ -126,11 +140,12 @@ int Run(const Config& config, Game& game) {
         FlushEvents();
 
         BeginDraw();
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-        SDL_RenderClear(renderer);
+        BeginFrame2D();
         DrawScenes();
         game.Draw();
-        SDL_RenderPresent(renderer);
+        if (!lastShot.empty() && maxFrames > 0 && frame + 1 == maxFrames)
+            Screen::Screenshot(std::filesystem::absolute(std::filesystem::path(lastShot)));
+        EndFrame2D();
 
         if (maxFrames > 0 && ++frame >= maxFrames) QuitRequested = true;
     }
@@ -141,9 +156,9 @@ int Run(const Config& config, Game& game) {
     StopServices(); // after the game's Stop, which may still use them
     FlushEvents();
     StopInput();
-    AttachDisplay(nullptr, nullptr, 0, 0, vsync);
+    StopRenderer();
+    AttachDisplay(nullptr, 0, 0, vsync, config.IntegerScaling);
     ForgetSettings();
-    SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
