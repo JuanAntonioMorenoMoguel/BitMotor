@@ -24,7 +24,7 @@ namespace BitMotor {
 enum class Align { Left, Center, Right };
 
 struct TextStyle {
-    // Empty: Font::Pixel().
+    // Empty: Font::Default() (Font::Pixel() unless the game sets another).
     BitMotor::Font Font = {};
     // Whole steps: 2 doubles every pixel of the font.
     int Size = 1;

@@ -7,7 +7,9 @@
 
 #include <filesystem>
 #include <map>
+#include <array>
 #include <optional>
+#include <set>
 #include <vector>
 
 using namespace BitMotor;
@@ -37,6 +39,31 @@ struct Progress {
     std::uint8_t Lives = 3;
 };
 BITMOTOR_FIELDS(Progress, Level, Mode, Name, Unlocked, Checkpoint, Tint, BestTime, Kills, Hero, Allies, Finished, Lives)
+
+struct Fixed {
+    std::array<int, 3> Slots{};
+    std::array<bool, 2> Flags{};
+    std::set<std::string> Seen;
+};
+BITMOTOR_FIELDS(Fixed, Slots, Flags, Seen)
+
+// As many fields as BITMOTOR_FIELDS takes.
+struct Wide {
+    int F1 = 1, F2 = 2, F3 = 3, F4 = 4, F5 = 5, F6 = 6, F7 = 7, F8 = 8, F9 = 9, F10 = 10, F11 = 11, F12 = 12, F13 = 13,
+        F14 = 14, F15 = 15, F16 = 16, F17 = 17, F18 = 18, F19 = 19, F20 = 20, F21 = 21, F22 = 22, F23 = 23, F24 = 24,
+        F25 = 25, F26 = 26, F27 = 27, F28 = 28, F29 = 29, F30 = 30, F31 = 31, F32 = 32, F33 = 33, F34 = 34, F35 = 35,
+        F36 = 36, F37 = 37, F38 = 38, F39 = 39, F40 = 40, F41 = 41, F42 = 42, F43 = 43, F44 = 44, F45 = 45, F46 = 46,
+        F47 = 47, F48 = 48, F49 = 49, F50 = 50, F51 = 51, F52 = 52, F53 = 53, F54 = 54, F55 = 55, F56 = 56, F57 = 57,
+        F58 = 58, F59 = 59, F60 = 60, F61 = 61, F62 = 62, F63 = 63, F64 = 64, F65 = 65, F66 = 66, F67 = 67, F68 = 68,
+        F69 = 69, F70 = 70, F71 = 71, F72 = 72, F73 = 73, F74 = 74, F75 = 75, F76 = 76, F77 = 77, F78 = 78, F79 = 79,
+        F80 = 80, F81 = 81, F82 = 82, F83 = 83, F84 = 84, F85 = 85, F86 = 86, F87 = 87, F88 = 88, F89 = 89, F90 = 90,
+        F91 = 91, F92 = 92, F93 = 93, F94 = 94, F95 = 95, F96 = 96;
+};
+BITMOTOR_FIELDS(Wide, F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12, F13, F14, F15, F16, F17, F18, F19, F20, F21, F22,
+                F23, F24, F25, F26, F27, F28, F29, F30, F31, F32, F33, F34, F35, F36, F37, F38, F39, F40, F41, F42, F43,
+                F44, F45, F46, F47, F48, F49, F50, F51, F52, F53, F54, F55, F56, F57, F58, F59, F60, F61, F62, F63, F64,
+                F65, F66, F67, F68, F69, F70, F71, F72, F73, F74, F75, F76, F77, F78, F79, F80, F81, F82, F83, F84, F85,
+                F86, F87, F88, F89, F90, F91, F92, F93, F94, F95, F96)
 
 } // namespace DataTestTypes
 
@@ -146,6 +173,35 @@ TEST(DataStructsRoundTrip) {
     CHECK(loaded->Finished);
     CHECK_EQ(int(loaded->Lives), 9);
     CHECK_EQ(Data::ToJson(*loaded), json); // stable output
+}
+
+TEST(DataArraysAndSetsRoundTrip) {
+    Fixed saved;
+    saved.Slots = {4, 5, 6};
+    saved.Flags = {true, false};
+    saved.Seen = {"reveal", "intro"};
+    std::string json = Data::ToJson(saved);
+    CHECK(json.find("\"Seen\": [\"intro\", \"reveal\"]") != std::string::npos); // sets in order
+    auto loaded = Data::FromJson<Fixed>(json);
+    CHECK(loaded.has_value());
+    CHECK(loaded->Slots == saved.Slots);
+    CHECK(loaded->Flags == saved.Flags);
+    CHECK(loaded->Seen == saved.Seen);
+    auto shorter = Data::FromJson<Fixed>(R"({"Slots": [9], "Flags": [true, true, true]})");
+    CHECK(shorter.has_value());
+    CHECK(shorter->Slots == (std::array<int, 3>{9, 0, 0})); // missing ones keep their value, extra ones go
+    CHECK(shorter->Flags == (std::array<bool, 2>{true, true}));
+}
+
+TEST(DataTakesNinetySixFields) {
+    Wide wide;
+    wide.F96 = 960;
+    wide.F1 = -1;
+    auto loaded = Data::FromJson<Wide>(Data::ToJson(wide));
+    CHECK(loaded.has_value());
+    CHECK_EQ(loaded->F96, 960);
+    CHECK_EQ(loaded->F1, -1);
+    CHECK_EQ(loaded->F48, 48);
 }
 
 TEST(DataMissingFieldsKeepDefaults) {

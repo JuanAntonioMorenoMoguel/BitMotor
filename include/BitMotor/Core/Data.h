@@ -5,11 +5,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -46,6 +48,10 @@ concept HasFields = requires(T& value) { BitMotorFields(value, [](const char*, a
 
 template <class T> struct IsVector : std::false_type {};
 template <class T, class A> struct IsVector<std::vector<T, A>> : std::true_type {};
+template <class T> struct IsArray : std::false_type {};
+template <class T, std::size_t N> struct IsArray<std::array<T, N>> : std::true_type {};
+template <class T> struct IsSet : std::false_type {};
+template <class T, class C, class A> struct IsSet<std::set<T, C, A>> : std::true_type {};
 template <class T> struct IsOptional : std::false_type {};
 template <class T> struct IsOptional<std::optional<T>> : std::true_type {};
 template <class T> struct IsStringMap : std::false_type {};
@@ -239,6 +245,22 @@ struct DataAccess {
                 if (Read(item, value)) result.push_back(std::move(value));
             }
             out = std::move(result);
+        } else if constexpr (IsArray<T>::value) {
+            // A fixed list: missing elements keep their value, extra ones are ignored.
+            if (kind != Kind::Array) return node.Mismatch("a list [...]");
+            for (std::size_t i = 0; i < out.size() && i < node.Size(); ++i) {
+                Document item = node.Element(i);
+                Read(item, out[i]);
+            }
+        } else if constexpr (IsSet<T>::value) {
+            if (kind != Kind::Array) return node.Mismatch("a list [...]");
+            T result;
+            for (std::size_t i = 0; i < node.Size(); ++i) {
+                Document item = node.Element(i);
+                typename T::value_type value{};
+                if (Read(item, value)) result.insert(std::move(value));
+            }
+            out = std::move(result);
         } else if constexpr (IsStringMap<T>::value) {
             if (kind != Kind::Object) return node.Mismatch("an object {...}");
             T result;
@@ -289,7 +311,7 @@ struct DataAccess {
                 Write(out, *value);
             else
                 out.Null();
-        } else if constexpr (IsVector<T>::value) {
+        } else if constexpr (IsVector<T>::value || IsArray<T>::value || IsSet<T>::value) {
             out.BeginArray();
             for (const auto& item : value) Write(out, item);
             out.EndArray();

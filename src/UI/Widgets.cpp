@@ -105,7 +105,7 @@ void Fire() {
 }
 
 // Corners kept, edges and centre stretched.
-void NineSlice(Rect area, const Region& image, float border, Color tint) {
+void DrawNineSlice(Rect area, const Region& image, float border, Color tint) {
     float b = Min(border, Min(image.Area.Width, image.Area.Height) * 0.5f);
     float screenB = Min(b / (image.Density > 0 ? image.Density : 1.0f), Min(area.Width, area.Height) * 0.5f);
     const float sx[3] = {image.Area.X, image.Area.X + b, image.Area.Right() - b};
@@ -132,7 +132,7 @@ void NineSlice(Rect area, const Region& image, float border, Color tint) {
 // A box: the nine-slice image tinted, or flat with a border.
 void Box(Rect area, const Region& image, Color fill, Color border) {
     if (image) {
-        NineSlice(area, image, Ui.Look.ImageBorder, fill);
+        DrawNineSlice(area, image, Ui.Look.ImageBorder, fill);
         if (border != Ui.Look.Border) UI::RectOutline(area, border);
         return;
     }
@@ -335,7 +335,7 @@ bool Button(BitMotor::Rect area, std::string_view label, bool enabled) {
 void Panel(BitMotor::Rect area, std::string_view title, Color tint) {
     const Theme& look = Ui.Look;
     if (look.PanelImage) {
-        NineSlice(area, look.PanelImage, look.ImageBorder, tint);
+        DrawNineSlice(area, look.PanelImage, look.ImageBorder, tint);
     } else {
         UI::Rect(area, look.Panel);
         UI::RectOutline(area, tint);
@@ -373,14 +373,19 @@ bool Press(BitMotor::Rect area, bool enabled, bool& pressed, bool& hovered, bool
 
 void TintedLabel(BitMotor::Rect area, std::string_view label, Color color) { Label(area, label, color, Align::Center); }
 
+// Pointed at, enabled or not.
+void TintedTooltip(BitMotor::Rect area, std::string_view tooltip) {
+    if (!tooltip.empty() && Hovered(area)) ShowTooltip(tooltip);
+}
+
 } // namespace
 
-bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enabled) {
+bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enabled, std::string_view tooltip) {
     const Theme& look = Ui.Look;
     bool pressed, hovered, focused;
     const bool lit = Press(area, enabled, pressed, hovered, focused);
     const Color frame = !enabled ? look.Faint : lit ? look.TextHover : tint;
-    if (look.ButtonImage) NineSlice(area, look.ButtonImage, look.ImageBorder, frame);
+    if (look.ButtonImage) DrawNineSlice(area, look.ButtonImage, look.ImageBorder, frame);
     else {
         UI::Rect(area, look.Button);
         UI::RectOutline(area, frame);
@@ -388,11 +393,12 @@ bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enable
     if (lit) UI::Rect(area.Expand(-2), tint.WithAlpha(tint.A * 0.18f));
     TintedLabel(area, label, !enabled ? look.TextDisabled : lit ? look.TextHover : tint);
     Remember(area, hovered, focused);
+    TintedTooltip(area, tooltip);
     if (pressed) Fire();
     return pressed;
 }
 
-bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool enabled) {
+bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool enabled, std::string_view tooltip) {
     const Theme& look = Ui.Look;
     bool pressed, hovered, focused;
     const bool lit = Press(area, enabled, pressed, hovered, focused);
@@ -400,6 +406,7 @@ bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool en
     UI::RectOutline(area, !enabled ? look.Faint : lit ? look.TextHover : tint.WithAlpha(tint.A * 0.7f));
     TintedLabel(area, label, !enabled ? look.TextDisabled : lit ? look.TextHover : tint);
     Remember(area, hovered, focused);
+    TintedTooltip(area, tooltip);
     if (pressed) Fire();
     return pressed;
 }
@@ -509,6 +516,16 @@ void Image(BitMotor::Rect area, const Region& image, Color tint) {
                               .Color = tint,
                               .Layer = Layer::Hud});
     Remember(area, Hovered(area), false);
+}
+
+void NineSlice(BitMotor::Rect area, const Region& image, float border, Color tint) {
+    if (image) DrawNineSlice(area, image, border, tint);
+}
+
+void ShowTooltip(std::string_view text) {
+    Ui.Tip = text;
+    Ui.TipAt = Ui.Mouse;
+    Ui.TipBelow = false;
 }
 
 void Tooltip(std::string_view text) {

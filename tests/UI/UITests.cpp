@@ -270,6 +270,40 @@ TEST(TooltipsFollowThePointedWidget) {
     Fresh();
 }
 
+TEST(TintedWidgetsCarryTheirTooltip) {
+    Fresh();
+    Detail::InputMouseMove({20, 15});
+    std::size_t plain = 0;
+    Frame([&] { UI::FlatButton(First, "One", Colors::Gold, false); });
+    plain = Detail::SpriteQueue().size();
+    Frame([&] { UI::FlatButton(First, "One", Colors::Gold, false, "Not yet: no money"); });
+    CHECK(Detail::SpriteQueue().size() > plain); // disabled, it still says why
+    Frame([&] { UI::Button(Second, "Two", Colors::Gold, true, "Far away"); });
+    const std::size_t away = Detail::SpriteQueue().size();
+    Frame([&] { UI::Button(Second, "Two", Colors::Gold); });
+    CHECK_EQ(Detail::SpriteQueue().size(), away); // not pointed at: no tooltip
+    Frame([&] {
+        if (UI::Hovered(First)) UI::ShowTooltip("Mine");
+    });
+    CHECK(Detail::SpriteQueue().size() > 0);
+    Fresh();
+}
+
+TEST(NineSlicesKeepTheirCorners) {
+    Fresh();
+    Frame([&] { UI::NineSlice({10, 10, 40, 20}, Region{}, 4, Colors::Red); });
+    CHECK_EQ(Detail::SpriteQueue().size(), 0u); // no image: nothing
+    std::vector<std::uint8_t> pixels(12 * 12 * 4, 255);
+    Region image{Texture::FromPixels(12, 12, pixels), {0, 0, 12, 12}, {0, 0}, 1};
+    Frame([&] { UI::NineSlice({10, 10, 40, 20}, image, 4, Colors::Red); });
+    CHECK_EQ(Detail::SpriteQueue().size(), 9u);
+    bool corner = false;
+    for (const Detail::QueuedSprite& s : Detail::SpriteQueue())
+        if (s.Instance.X == 46 && s.Instance.Y == 26 && s.Instance.Width == 4 && s.Instance.Height == 4) corner = true;
+    CHECK(corner); // the bottom right corner, at its own size
+    Fresh();
+}
+
 TEST(UiIgnoresTheKeyThatFinishesARebind) {
     Fresh();
     Input::Bind(3, "jump", {Key::Space});

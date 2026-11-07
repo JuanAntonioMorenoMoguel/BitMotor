@@ -37,8 +37,14 @@ struct AtlasFontLayout {
 
 class Font {
 public:
-    // An empty font: Text uses Font::Pixel() for it.
+    // An empty font: Text uses Font::Default() for it.
     Font() = default;
+
+    // What an empty font draws with: Font::Pixel() unless the game sets its own, so every TextStyle (and
+    // the UI) uses it without naming it.
+    //     Font::SetDefault(Font::FromAtlas(atlas));
+    static void SetDefault(const Font& font);
+    static Font Default();
 
     // The built-in pixel font. Always available, also before the window opens.
     static Font Pixel();

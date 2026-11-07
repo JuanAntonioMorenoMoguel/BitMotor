@@ -258,6 +258,17 @@ Font Font::Pixel() {
     return font;
 }
 
+namespace {
+Font& DefaultFont() {
+    static Font font;
+    return font;
+}
+} // namespace
+
+void Font::SetDefault(const Font& font) { DefaultFont() = font; }
+
+Font Font::Default() { return DefaultFont() ? DefaultFont() : Pixel(); }
+
 Font Font::FromAtlas(const Atlas& atlas, const AtlasFontLayout& layout) {
     auto data = std::make_shared<Detail::FontData>();
     data->CapHeight = layout.CapHeight;
@@ -284,11 +295,11 @@ Font Font::FromAtlas(const Atlas& atlas, const AtlasFontLayout& layout) {
 }
 
 bool Font::Has(char32_t character) const {
-    const Detail::FontData* data = Data ? Data.get() : Pixel().Data.get();
+    const Detail::FontData* data = Data ? Data.get() : Default().Data.get();
     return character == U' ' || data->Find(character) != nullptr;
 }
 
-float Font::CapHeight() const { return Data ? Data->CapHeight : Pixel().CapHeight(); }
-float Font::LineHeight() const { return Data ? Data->LineHeight : Pixel().LineHeight(); }
+float Font::CapHeight() const { return Data ? Data->CapHeight : Default().CapHeight(); }
+float Font::LineHeight() const { return Data ? Data->LineHeight : Default().LineHeight(); }
 
 } // namespace BitMotor

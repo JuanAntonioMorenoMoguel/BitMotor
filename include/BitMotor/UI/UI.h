@@ -84,11 +84,14 @@ bool Toggle(BitMotor::Rect area, std::string_view label, bool& value, bool enabl
 // within [min, max]. True on every frame it changes.
 bool Slider(BitMotor::Rect area, std::string_view label, float& value, float min = 0, float max = 1, float step = 0.05f,
             bool enabled = true);
-// The same in a colour of their own (see Theme: the tint colours the frame and the label).
+// The same in a colour of their own (see Theme: the tint colours the frame and the label). `tooltip` is
+// shown while it is pointed at, also when it is disabled (to say why).
 void Panel(BitMotor::Rect area, std::string_view title, Color tint);
-bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enabled = true);
+bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enabled = true,
+            std::string_view tooltip = {});
 // A flat button for lists and choices: an outline in the tint, filled faintly while pointed at.
-bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool enabled = true);
+bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool enabled = true,
+                std::string_view tooltip = {});
 // A filled bar (health, loading): `fraction` 0..1 of it in `color`.
 void Bar(BitMotor::Rect area, float fraction, Color color);
 void Bar(BitMotor::Rect area, float fraction, Color color, Color back);
@@ -97,8 +100,14 @@ void Segments(BitMotor::Rect area, float fraction, Color color, float segment = 
 void Segments(BitMotor::Rect area, float fraction, Color color, Color back, float segment = 3);
 // A region stretched over the area (icons, portraits).
 void Image(BitMotor::Rect area, const Region& image, Color tint = Colors::White);
+// A region drawn as a nine-slice over the area: its corners (`border` texture pixels) keep their size, the
+// edges and the centre stretch. What panels and buttons use for their images.
+void NineSlice(BitMotor::Rect area, const Region& image, float border, Color tint = Colors::White);
 // Text shown next to the cursor (or the focused widget) while the widget drawn just before is pointed at.
 void Tooltip(std::string_view text);
+// Text shown next to the cursor this frame, for your own widgets:
+//     if (UI::Hovered(gauge)) UI::ShowTooltip(std::format("{:.0f} degrees", temperature));
+void ShowTooltip(std::string_view text);
 // "[Space] Jump" / "[Pad South] Jump": the action's control for the device in use, boxed, and a label.
 // Returns its width.
 float Prompt(Vec2 position, int action, std::string_view label = {});
