@@ -289,6 +289,20 @@ TEST(TintedWidgetsCarryTheirTooltip) {
     Fresh();
 }
 
+TEST(KeyboardFocusCanBeTurnedOff) {
+    Fresh();
+    Detail::InputMouseMove({300, 300});
+    UI::SetKeyboardFocus(false);
+    bool pressed = false;
+    Frame([&] { UI::Button(First, "One"); });
+    Tap(Key::Enter);
+    Frame([&] { pressed = UI::Button(First, "One"); });
+    CHECK(!pressed);           // Enter is the game's
+    CHECK(UI::Pressed(Nav::Confirm)); // still readable
+    UI::SetKeyboardFocus(true);
+    Fresh();
+}
+
 TEST(NineSlicesKeepTheirCorners) {
     Fresh();
     Frame([&] { UI::NineSlice({10, 10, 40, 20}, Region{}, 4, Colors::Red); });

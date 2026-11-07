@@ -144,6 +144,9 @@ void SetNavigation(Nav nav, std::initializer_list<Control> controls);
 // Uses the controls of one of the game's actions instead (so remapping them changes the menus too).
 void SetNavigation(Nav nav, int action);
 template <Input::Detail::ActionId A> void SetNavigation(Nav nav, A action) { SetNavigation(nav, int(action)); }
+// false: the keyboard and gamepad do not move a focus through the widgets nor press them, for games that
+// keep those keys for themselves (the mouse alone works the UI). UI::Pressed keeps working.
+void SetKeyboardFocus(bool on);
 // Which widget has the focus: its number in calling order this frame (-1: none). SetFocus moves it.
 int Focus();
 void SetFocus(int index);

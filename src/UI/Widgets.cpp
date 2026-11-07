@@ -60,6 +60,8 @@ struct UiState {
     int Adjust = 0;
     // Draw the focus: after the keyboard or the gamepad moved it (the mouse hides it).
     bool ShowFocus = false;
+    // Off: the keyboard and gamepad never move the focus nor press widgets.
+    bool KeyboardFocus = true;
 
     Scope Screen, Modal;
     bool InModal = false, ModalNow = false, ModalLast = false;
@@ -221,7 +223,7 @@ void BeginUi() {
     Scope& scope = Active();
     Ui.Confirm = false;
     Ui.Adjust = 0;
-    if (scope.LastCount > 0) {
+    if (scope.LastCount > 0 && Ui.KeyboardFocus) {
         auto at = [&](Nav nav) { return Ui.Fired[std::size_t(nav)]; };
         bool adjustable =
             scope.Focus >= 0 && scope.Focus < scope.LastCount && scope.LastAdjustable[std::size_t(scope.Focus)];
@@ -580,6 +582,11 @@ void SetNavigation(Nav nav, std::initializer_list<Control> controls) {
 }
 
 void SetNavigation(Nav nav, int action) { Ui.Navigation[std::size_t(nav)] = {{}, action}; }
+
+void SetKeyboardFocus(bool on) {
+    Ui.KeyboardFocus = on;
+    if (!on) Ui.ShowFocus = false;
+}
 
 int Focus() {
     Scope& scope = Active();
