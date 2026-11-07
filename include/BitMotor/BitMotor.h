@@ -33,6 +33,10 @@
 #include "BitMotor/Colors/Color.h"
 #include "BitMotor/Colors/Colors.h"
 
+#include "BitMotor/Audio/Music.h"
+#include "BitMotor/Audio/Sound.h"
+#include "BitMotor/Audio/Synth.h"
+
 #include "BitMotor/Render/Atlas.h"
 #include "BitMotor/Render/Camera.h"
 #include "BitMotor/Render/Light.h"

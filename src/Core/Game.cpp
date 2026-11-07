@@ -1,5 +1,6 @@
 #include "BitMotor/Core/Game.h"
 
+#include "Audio/AudioInternal.h"
 #include "BitMotor/Core/Args.h"
 #include "BitMotor/Core/Events.h"
 #include "BitMotor/Core/Log.h"
@@ -110,6 +111,7 @@ int Run(const Config& config, Game& game) {
 
     ResetTime(config.TickRate);
     StartInput();
+    StartAudio();
     const long long maxFrames = MaxFrames();
     // `--screenshot file.png`: the last frame of a `--frames N` run (relative to the current folder).
     const std::string lastShot = Args::Get("--screenshot");
@@ -140,6 +142,7 @@ int Run(const Config& config, Game& game) {
             UpdateScenes();
         }
         FlushEvents();
+        UpdateAudio(realDt);
 
         BeginDraw();
         BeginFrame2D();
@@ -160,6 +163,8 @@ int Run(const Config& config, Game& game) {
     StopServices(); // after the game's Stop, which may still use them
     FlushEvents();
     StopInput();
+    StopAudio();
+    ResetAudio();
     StopRenderer();
     AttachDisplay(nullptr, 0, 0, vsync, config.IntegerScaling);
     ForgetSettings();

@@ -3,9 +3,10 @@
 A C++20 library to make simple games. It unifies nyiengilib and is the base that ProjectEGIDA, MONOCHROME and
 RogueInvasion will migrate to. The full design (modules, API and roadmap) is in [docs/BitMotor.md](docs/BitMotor.md).
 
-> **Status: phase 4 done.** Core (phase 1), architecture (2: Services, Scenes, Managers, Tasks, Settings),
-> 2D rendering (3: SDL_GPU, sprites, atlas, camera, lighting, particles) and text and UI (4: fonts, Rich text,
-> Typewriter, translations with `Tr`, shapes and immediate widgets). Next: phase 5 (Audio).
+> **Status: phase 5 done.** Core (phase 1), architecture (2: Services, Scenes, Managers, Tasks, Settings),
+> 2D rendering (3: SDL_GPU, sprites, atlas, camera, lighting, particles), text and UI (4: fonts, Rich text,
+> Typewriter, translations with `Tr`, shapes and immediate widgets) and audio (5: sounds from files or
+> functions, music with crossfades, procedural music and BitMusic songs, see [docs/BitMusic.md](docs/BitMusic.md)).
 
 ## Building
 
@@ -85,7 +86,7 @@ int main() { return Run<MyGame>({.Title = "My game"}); }
 | `cmake/CompileShaders.cmake` | Turns BitMotor's own shaders (`src/Render/Shaders`) into `Compiled.h`, which is committed. Only needed after editing a shader: `cmake -P cmake/CompileShaders.cmake` (glslc or glslangValidator from the Vulkan SDK) |
 | `tests/` | Internal tests with a tiny framework (`TEST`, `CHECK`, `CHECK_EQ`, `CHECK_NEAR`). `BitMotorTests <filter>` runs only the tests whose name contains the filter |
 | `examples/` | One folder per example with a single `Main.cpp`. They also run in ctest with `--frames 60` |
-| `docs/` | Design document |
+| `docs/` | Design document, and the BitMusic song format (`BitMusic.md`) |
 
 ## Conventions
 
@@ -99,5 +100,7 @@ Everything lives in `namespace BitMotor`. Formatting with `.clang-format` (4 spa
 | SDL3 | 3.4.20 | Window, events and the GPU (SDL_GPU on Vulkan) |
 | stb | 2024-07-29 | Reading and writing images (`Texture`, screenshots, the window icon) |
 | nlohmann-json | 3.12.0 | Reading and writing JSON in `Data` (never visible in BitMotor's headers) |
+| miniaudio | 0.11 | The audio device, and decoding WAV, FLAC and MP3 (compiled inside BitMotor) |
+| stb (stb_vorbis) | 2024-07-29 | Decoding OGG Vorbis, through miniaudio |
 
 More dependencies are added in the phase that needs them.

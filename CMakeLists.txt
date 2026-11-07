@@ -31,6 +31,9 @@ find_package(SDL3 CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 # stb (images): header-only. vcpkg puts it in include/, Linux distributions in include/stb/.
 find_path(BITMOTOR_STB_INCLUDE_DIR stb_image.h PATH_SUFFIXES stb REQUIRED)
+# miniaudio (audio device; WAV, FLAC and MP3): one header, compiled inside BitMotor. stb_vorbis (OGG) comes with stb.
+find_path(BITMOTOR_MINIAUDIO_INCLUDE_DIR miniaudio.h PATH_SUFFIXES miniaudio REQUIRED)
+find_package(Threads REQUIRED)
 
 file(GLOB_RECURSE BITMOTOR_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp
@@ -43,8 +46,11 @@ add_library(BitMotor::BitMotor ALIAS BitMotor)
 target_compile_features(BitMotor PUBLIC cxx_std_20)
 target_include_directories(BitMotor
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
-    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${BITMOTOR_STB_INCLUDE_DIR})
-target_link_libraries(BitMotor PRIVATE SDL3::SDL3 nlohmann_json::nlohmann_json)
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src ${BITMOTOR_STB_INCLUDE_DIR} ${BITMOTOR_MINIAUDIO_INCLUDE_DIR})
+target_link_libraries(BitMotor PRIVATE SDL3::SDL3 nlohmann_json::nlohmann_json Threads::Threads ${CMAKE_DL_LIBS})
+if(UNIX AND NOT APPLE)
+    target_link_libraries(BitMotor PRIVATE m)
+endif()
 if(WIN32)
     target_link_libraries(BitMotor PRIVATE shell32) # CommandLineToArgvW
 endif()

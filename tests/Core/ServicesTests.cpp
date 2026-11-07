@@ -21,10 +21,10 @@ struct Score : Service {
     void Stop() override { Calls.push_back("Score.Stop"); }
 };
 
-struct Music : Service {
-    void Start() override { Calls.push_back("Music.Start"); }
-    void Update() override { Calls.push_back("Music.Update"); }
-    void Stop() override { Calls.push_back("Music.Stop"); }
+struct Jukebox : Service {
+    void Start() override { Calls.push_back("Jukebox.Start"); }
+    void Update() override { Calls.push_back("Jukebox.Update"); }
+    void Stop() override { Calls.push_back("Jukebox.Stop"); }
 };
 
 struct SaveBackend : Service {
@@ -58,21 +58,21 @@ TEST(ServicesAddStartsAndGetFinds) {
     CHECK_EQ(&Services::Get<Score>(), &score);
     CHECK_EQ(Services::Find<Score>(), &score);
     CHECK(Services::Has<Score>());
-    CHECK(!Services::Has<Music>());
-    CHECK(Services::Find<Music>() == nullptr);
+    CHECK(!Services::Has<Jukebox>());
+    CHECK(Services::Find<Jukebox>() == nullptr);
     Clean();
 }
 
 TEST(ServicesUpdateInOrderAndStopInReverse) {
     Clean();
     Services::Add<Score>();
-    Services::Add<Music>();
+    Services::Add<Jukebox>();
     Calls.clear();
     Detail::UpdateServices();
-    CHECK(Calls == std::vector<std::string>({"Score.Update", "Music.Update"}));
+    CHECK(Calls == std::vector<std::string>({"Score.Update", "Jukebox.Update"}));
     Calls.clear();
     Detail::StopServices();
-    CHECK(Calls == std::vector<std::string>({"Music.Stop", "Score.Stop"}));
+    CHECK(Calls == std::vector<std::string>({"Jukebox.Stop", "Score.Stop"}));
     CHECK_EQ(Detail::ServiceCount(), std::size_t(0));
     CHECK(!Services::Has<Score>());
 }
@@ -80,7 +80,7 @@ TEST(ServicesUpdateInOrderAndStopInReverse) {
 TEST(ServicesRemoveStopsIt) {
     Clean();
     Services::Add<Score>();
-    Services::Add<Music>();
+    Services::Add<Jukebox>();
     Calls.clear();
     CHECK(Services::Remove<Score>());
     CHECK(Calls == std::vector<std::string>({"Score.Stop"}));
@@ -103,13 +103,13 @@ TEST(ServicesByInterface) {
 TEST(ServicesRemovedWhileUpdatingDoesNotBreakTheLoop) {
     Clean();
     Services::Add<OneShot>();
-    Services::Add<Music>();
+    Services::Add<Jukebox>();
     Calls.clear();
     Detail::UpdateServices();
-    CHECK(Calls == std::vector<std::string>({"OneShot.Update", "OneShot.Stop", "Music.Update"}));
+    CHECK(Calls == std::vector<std::string>({"OneShot.Update", "OneShot.Stop", "Jukebox.Update"}));
     CHECK_EQ(Detail::ServiceCount(), std::size_t(1));
     Calls.clear();
     Detail::UpdateServices();
-    CHECK(Calls == std::vector<std::string>({"Music.Update"}));
+    CHECK(Calls == std::vector<std::string>({"Jukebox.Update"}));
     Clean();
 }

@@ -43,6 +43,7 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 `Color { R, G, B, A, Hex, WithAlpha, Lighter, Darker, Lerp }` y 40 `Colors::`: White, Black, Gray, LightGray, DarkGray, Red, DarkRed, Crimson, Maroon, Coral, Salmon, Orange, Amber, Gold, Yellow, Lime, Green, DarkGreen, Olive, Mint, Teal, Turquoise, Cyan, SkyBlue, Blue, Navy, Indigo, Purple, Violet, Lavender, Magenta, Pink, Rose, Brown, Tan, Beige, Slate, Phosphor, Ice, Transparent.
 
 ### Audio
+Formatos: WAV, FLAC, MP3, OGG y `.bitmusic` (canciones de BitMusic, sintetizadas por el motor).
 `Sound { Load, Synth, Play(volume, pitch, pan), SetMaxVoices }`, `Voice { Advance, … }`, `Music { Play, Procedural, Stop, IsPlaying, SetParam, Beat, Pulse }`, `Audio::SetVolume(Bus), SetPaused`, `Synth::Sine, Square, Saw, Triangle, Noise, LowPass, HighPass, Bitcrush, Fall, AttackRelease, Decay, NoteToHz`.
 
 ### Textures
@@ -58,7 +59,7 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 `Font::Pixel`, `TextStyle { Font, Size, Color, Align, Shadow, Outline, LineHeight }`, `Draw, Paragraph, Rich, Typewriter, Measure, Wrap, Layout`, `Number(v, suffix), Percent, Clock`, `SetLanguage, Language, Tr` (`lang/<code>.json`).
 
 ### Platform
-`Name, PlayerName, PlayerId`, `Unlock, IsUnlocked, Achievements` (+ logros automáticos por umbral en `achievements.json`), `AddStat, SetStat, GetStat`, `SubmitScore, Leaderboard` (asíncrono), `CloudSave, CloudLoad`, `SetPresence`, `OwnsDlc`, `IsSteamDeck, ShowKeyboard`, `CreateLobby, FindLobbies, JoinLobby, SetLobbyData, InviteFriends`. El SDK de Steamworks no va en el repositorio (`-DBITMOTOR_STEAM_SDK`).
+`Name, PlayerName, PlayerId`, `Unlock, IsUnlocked, Achievements` (+ logros automáticos por umbral en `achievements.json`), `AddStat, SetStat, GetStat`, `SubmitScore, Leaderboard` (asíncrono; locales en la fase 6), `OwnsDlc`, `IsSteamDeck, ShowKeyboard`. Con internet (fase 16): marcadores online, `CloudSave, CloudLoad`, `SetPresence`, `CreateLobby, FindLobbies, JoinLobby, SetLobbyData, InviteFriends`. El SDK de Steamworks no va en el repositorio (`-DBITMOTOR_STEAM_SDK`).
 
 ### Gpu y shaders
 - `CustomRenderer { Init, Resize, Render, Shutdown }` (es un servicio). El motor sigue gestionando swapchain, ImGui, capturas y redimensionado.
@@ -79,8 +80,8 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 | 2 | Arquitectura: Services, Scenes, Managers, Tasks, Settings | |
 | 3 | Render 2D: Renderer2D, Textures, Sprite2D, Camera2D, Light2D, Particles | |
 | 4 | Text y UI | |
-| 5 | Audio | |
-| 6 | Platform y Store (local + Steam) | |
+| 5 | Audio y formato `.bitmusic` (lector, escritor y sintetizador) | |
+| 6 | Platform y Store sin internet (local + Steam: logros, estadísticas, marcadores locales, DLC) | |
 | 7 | `CustomRenderer` + `Gpu::Native` + `BitMotor_Shaders` | **v1.0** |
 | 8 | Migrar ProjectEGIDA | |
 | 9 | Migrar MONOCHROME (TickRate 120, HitStop, `MonoRenderer`, escenas, `WorldManager` con EnTT) | |
@@ -88,9 +89,9 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 | 11 | Multijugador local | |
 | 12 | Compute + ShaderRenderer | **v1.2** |
 | 13 | Migrar RogueInvasion (depende de nyiengisprite) | |
-| 14 | Net online: Steam, lobbies, lockstep | **v2.0** |
-| 15 | Red avanzada (según necesidad) | |
-| 16 | 3D y extras aplazados: Models, Obj 3D, TTF, RenderTexture, Dropdown, TextField, Wipe/Slide | |
+| 14 | 3D y extras aplazados: Models, Obj 3D, TTF, RenderTexture, Dropdown, TextField, Wipe/Slide | |
+| 15 | BitMusic: la aplicación (hecha con BitMotor), BitMotor en web (Emscripten, renderer para el navegador) y widgets de tracker. El formato `.bitmusic` ya existe desde la fase 5 | |
+| 16 | Internet: Net online (Steam, lobbies, lockstep), red avanzada, y de Platform los marcadores online, la nube (`CloudSave`, `CloudLoad`) y la presencia | **v2.0** |
 
 Cada fase termina con tests internos y un ejemplo en `examples/`.
 

@@ -15,6 +15,7 @@ using namespace BitMotor;
 enum class Action { Accept };
 
 struct UiExample : Game {
+    Sound click;
     bool confirmReset = false;
     Timer saved{2};
     float health = 1;
@@ -22,8 +23,11 @@ struct UiExample : Game {
     void Start() override {
         Input::Bind(Action::Accept, "accept", {Key::Enter, Button::South});
         saved.Elapsed = saved.Duration; // not shown until the first save
-        // A sound would play here for every press (phase 5).
-        UI::OnClick([] {});
+        // A short tick for every press of a button or toggle.
+        click = Sound::Synth(0.03f, [](Voice& v, float u, float dt) {
+            return Synth::Sine(v.Advance(0, 1200, dt)) * Synth::Fall(u) * 0.15f;
+        });
+        UI::OnClick([this] { click.Play(); });
     }
 
     void Update() override {
