@@ -72,6 +72,7 @@ struct Region {
     Vec2 Size() const { return Area.Size() * (1.0f / (Density > 0 ? Density : 1.0f)); }
     // False when there is nothing to draw (no texture or an empty rectangle).
     explicit operator bool() const { return bool(Source) && Area.Width > 0 && Area.Height > 0; }
+    bool operator==(const Region&) const = default;
 };
 
 inline Region Texture::Full(Vec2 pivot) const {
