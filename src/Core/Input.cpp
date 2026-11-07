@@ -16,15 +16,17 @@ namespace {
 
 constexpr float DownThreshold = 0.5f;
 
-// A digital control (key, mouse button, pad button) seen per Update.
+// A digital control (key, mouse button, pad button) seen per Update, and per frame (for the UI, which
+// runs in Draw: it must work when no Update runs, as in a pause with Time::SetScale(0)).
 struct Digital {
     bool Down = false;         // right now, from the events
     bool LatchPress = false;   // went down since the previous Update (keeps quick taps)
     bool TickDown = false;     // as this Update sees it
     bool PreviousTick = false; // as the previous Update saw it
+    bool FrameLatch = false, FrameDown = false, FrameEdge = false; // the same, per frame
 
     void Set(bool down) {
-        if (down && !Down) LatchPress = true;
+        if (down && !Down) LatchPress = FrameLatch = true;
         Down = down;
     }
     void Tick() {
@@ -32,8 +34,15 @@ struct Digital {
         TickDown = Down || LatchPress;
         LatchPress = false;
     }
+    // Every press counts, even two taps on consecutive frames.
+    void TickFrame() {
+        FrameDown = Down || FrameLatch;
+        FrameEdge = FrameLatch;
+        FrameLatch = false;
+    }
     bool Pressed() const { return TickDown && !PreviousTick; }
     bool Released() const { return !TickDown && PreviousTick; }
+    bool FramePressed() const { return FrameEdge; }
 };
 
 struct ActionData {
@@ -51,10 +60,14 @@ struct State {
     std::array<float, std::size_t(Detail::PadAxis::Count)> Axes{};
     Vec2 MousePosition, PendingMouseDelta, TickMouseDelta;
     float PendingWheel = 0, TickWheel = 0;
+    Vec2 FrameMouseStart, FrameMouseDelta;
+    float FramePendingWheel = 0, FrameWheel = 0;
+    std::array<bool, std::size_t(Button::Count)> AnalogFrame{}, AnalogPreviousFrame{};
     bool UsingGamepad = false, HasGamepad = false;
     std::vector<ActionData> Actions;
 
     int RebindAction = -1;
+    bool RebindEnded = false, FrameRebindEnded = false; // the key that ends a Rebind must not reach the UI
 
     bool Recording = false;
     InputRecording Record;
@@ -135,6 +148,7 @@ float StrengthOf(Control control) {
 void Assign(Control control) {
     ActionData* action = Find(Now.RebindAction);
     Now.RebindAction = -1;
+    Now.RebindEnded = true;
     if (!action) return;
     std::erase_if(action->Controls, [&](const Control& c) { return c.IsGamepad() == control.IsGamepad(); });
     action->Controls.insert(action->Controls.begin(), control);
@@ -199,7 +213,10 @@ void InputMouseMove(Vec2 position) {
     if (LengthSquared(delta) > 4.0f) Now.UsingGamepad = false;
 }
 
-void InputMouseWheel(float amount) { Now.PendingWheel += amount; }
+void InputMouseWheel(float amount) {
+    Now.PendingWheel += amount;
+    Now.FramePendingWheel += amount;
+}
 
 void InputPadButton(Button button, bool down) {
     if (button >= Button::Count || Analog(button) >= 0) return;
@@ -229,6 +246,55 @@ void InputPadConnected(bool connected) {
         Now.UsingGamepad = false;
     }
 }
+
+void InputFrame() {
+    for (auto& key : Now.Keys) key.TickFrame();
+    for (auto& button : Now.Mouse) button.TickFrame();
+    for (auto& button : Now.Pad) button.TickFrame();
+    Now.FrameMouseDelta = Now.MousePosition - Now.FrameMouseStart;
+    Now.FrameMouseStart = Now.MousePosition;
+    Now.FrameWheel = std::exchange(Now.FramePendingWheel, 0.0f);
+    Now.FrameRebindEnded = std::exchange(Now.RebindEnded, false);
+    Now.AnalogPreviousFrame = Now.AnalogFrame;
+    for (std::size_t b = 0; b < Now.AnalogFrame.size(); ++b) Now.AnalogFrame[b] = Analog(Button(b)) >= DownThreshold;
+}
+
+bool FrameDown(Control control) {
+    switch (control.Type) {
+    case Control::Kind::Key:
+        return control.Code >= 0 && control.Code < int(Key::Count) && Now.Keys[std::size_t(control.Code)].FrameDown;
+    case Control::Kind::Mouse:
+        return control.Code >= 0 && control.Code < int(MouseButton::Count) &&
+               Now.Mouse[std::size_t(control.Code)].FrameDown;
+    case Control::Kind::Button:
+        if (control.Code < 0 || control.Code >= int(Button::Count)) return false;
+        if (Analog(Button(control.Code)) >= 0) return Now.AnalogFrame[std::size_t(control.Code)];
+        return Now.Pad[std::size_t(control.Code)].FrameDown;
+    }
+    return false;
+}
+
+bool FramePressed(Control control) {
+    switch (control.Type) {
+    case Control::Kind::Key:
+        return control.Code >= 0 && control.Code < int(Key::Count) &&
+               Now.Keys[std::size_t(control.Code)].FramePressed();
+    case Control::Kind::Mouse:
+        return control.Code >= 0 && control.Code < int(MouseButton::Count) &&
+               Now.Mouse[std::size_t(control.Code)].FramePressed();
+    case Control::Kind::Button: {
+        if (control.Code < 0 || control.Code >= int(Button::Count)) return false;
+        auto b = std::size_t(control.Code);
+        if (Analog(Button(control.Code)) >= 0) return Now.AnalogFrame[b] && !Now.AnalogPreviousFrame[b];
+        return Now.Pad[b].FramePressed();
+    }
+    }
+    return false;
+}
+
+Vec2 FrameMouseDelta() { return Now.FrameMouseDelta; }
+bool RebindEndedThisFrame() { return Now.FrameRebindEnded; }
+float FrameWheel() { return Now.FrameWheel; }
 
 void InputTick() {
     for (auto& key : Now.Keys) key.Tick();
@@ -348,7 +414,10 @@ void Rebind(int action) {
     Now.RebindAction = action;
 }
 bool IsRebinding() { return Now.RebindAction >= 0; }
-void CancelRebind() { Now.RebindAction = -1; }
+void CancelRebind() {
+    if (Now.RebindAction >= 0) Now.RebindEnded = true;
+    Now.RebindAction = -1;
+}
 
 std::string KeyName(int action) { return FirstName(action, false); }
 std::string ButtonName(int action) { return FirstName(action, true); }

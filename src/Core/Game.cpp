@@ -18,6 +18,7 @@
 #include "Core/TimeInternal.h"
 #include "Render/ImageInternal.h"
 #include "Render/RendererInternal.h"
+#include "UI/UiInternal.h"
 
 #include <SDL3/SDL.h>
 
@@ -126,6 +127,7 @@ int Run(const Config& config, Game& game) {
         last = now;
 
         PollEvents();
+        InputFrame();
         UpdateWatches(realDt);
 
         int updates = BeginFrame(realDt);
@@ -141,8 +143,10 @@ int Run(const Config& config, Game& game) {
 
         BeginDraw();
         BeginFrame2D();
+        BeginUi();
         DrawScenes();
         game.Draw();
+        EndUi();
         if (!lastShot.empty() && maxFrames > 0 && frame + 1 == maxFrames)
             Screen::Screenshot(std::filesystem::absolute(std::filesystem::path(lastShot)));
         EndFrame2D();

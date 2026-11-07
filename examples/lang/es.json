@@ -1,0 +1,39 @@
+{
+  "language": "Español",
+  "text": {
+    "title": "Texto de BitMotor",
+    "paragraph": "Un párrafo se ajusta solo a su ancho. Tab: alinearlo a la izquierda, al centro o a la derecha. + y -: escala del texto.",
+    "rich": "Texto [gold]enriquecido[/]: [red]colores[/], [sky blue][wave]olas[/][/] y [orange][shake]¡temblores![/][/]",
+    "score": "Puntos: {0}",
+    "short": "Corto: {0}",
+    "percent": "Cargado: {0}",
+    "clock": "Tiempo: {0}",
+    "hint": "L: idioma. Espacio: siguiente.",
+    "dialogue": {
+      "0": "¡Hola! Soy una [gold]máquina de escribir[/]. Escribo letra a letra y me paro en los puntos.",
+      "1": "Pulsa [sky blue]Espacio[/] para ver la frase entera de golpe, o para leer la siguiente.",
+      "2": "Los acentos también funcionan: ¿qué tal? ¡Olé! Ça va? Über… 100 €."
+    }
+  },
+  "ui": {
+    "title": "OPCIONES",
+    "master": "Volumen general",
+    "music": "Música",
+    "sound": "Sonidos",
+    "volume.tip": "Lo usará el audio de la fase 5.",
+    "fullscreen": "Pantalla completa",
+    "textscale": "Texto: x{0}",
+    "language": "Idioma: {0}",
+    "language.tip": "Cada fichero lang/*.json del juego.",
+    "save": "Guardar",
+    "reset": "Restablecer",
+    "quit": "Salir",
+    "saved": "Guardado en settings.json",
+    "reset.title": "RESTABLECER",
+    "reset.ask": "¿Volver a las opciones por defecto?",
+    "yes": "Sí",
+    "no": "No",
+    "health": "Vida",
+    "accept": "Aceptar"
+  }
+}
