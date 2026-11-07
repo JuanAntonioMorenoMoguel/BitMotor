@@ -1,10 +1,16 @@
-// The frame on the GPU: the game draws into the screen target (logical resolution), which is then scaled
-// into the window with black bars, and optionally saved to a file.
+// The frame on the GPU, in passes, all at the logical resolution:
+//   1. World sprites -> G-buffer (colour, normal + emission).
+//   2. Scene (HDR): clear colour, Background, the World lit (or plain), Glow (added), Overlay.
+//   3. Bloom (only when it is on): bright parts at half size, blurred across and down.
+//   4. Screen target: the scene + bloom with the screen effects and the flash, then the Hud, then fades.
+// The screen target is then scaled into the window with black bars, and optionally saved to a file.
 #include "Render/RendererInternal.h"
 
 #include "BitMotor/Colors/Colors.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
+#include "BitMotor/Core/Time.h"
+#include "BitMotor/Render/Light.h"
 #include "Core/DisplayInternal.h"
 #include "Render/ImageInternal.h"
 #include "Render/Shaders/Compiled.h"
@@ -13,29 +19,99 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 
 namespace BitMotor::Detail {
 
 namespace {
 
 constexpr SDL_GPUTextureFormat ScreenFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+constexpr SDL_GPUTextureFormat GBufferFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+constexpr SDL_GPUTextureFormat HdrFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
 SDL_GPUDevice* Device = nullptr;
 SDL_Window* Window = nullptr;
-SDL_GPUGraphicsPipeline* FillPipeline = nullptr;
-SDL_GPUGraphicsPipeline* SpritePipeline = nullptr; // alpha blending
-SDL_GPUGraphicsPipeline* GlowPipeline = nullptr;   // additive
+
+struct Pipelines {
+    SDL_GPUGraphicsPipeline* Fill = nullptr;  // fades, on the screen target
+    SDL_GPUGraphicsPipeline* Hud = nullptr;   // sprites on the screen target
+    SDL_GPUGraphicsPipeline* World = nullptr; // sprites into the G-buffer
+    SDL_GPUGraphicsPipeline* Scene = nullptr; // sprites on the HDR scene (Background, Overlay)
+    SDL_GPUGraphicsPipeline* Glow = nullptr;  // additive sprites on the HDR scene
+    SDL_GPUGraphicsPipeline* Light = nullptr; // the G-buffer, lit, over the background
+    SDL_GPUGraphicsPipeline* BloomExtract = nullptr;
+    SDL_GPUGraphicsPipeline* BloomBlur = nullptr;
+    SDL_GPUGraphicsPipeline* Composite = nullptr;
+
+    std::array<SDL_GPUGraphicsPipeline*, 9> All() const {
+        return {Fill, Hud, World, Scene, Glow, Light, BloomExtract, BloomBlur, Composite};
+    }
+} Pipeline;
+
 SDL_GPUSampler* NearestSampler = nullptr;
 SDL_GPUSampler* LinearSampler = nullptr;
-// Every sprite of the frame, uploaded once; it grows when a frame needs more room.
-SDL_GPUBuffer* SpriteBuffer = nullptr;
-SDL_GPUTransferBuffer* SpriteUpload = nullptr;
-Uint32 SpriteCapacity = 0;
+Texture FlatNormals; // 1x1: facing the viewer, no emission
+
+// A GPU buffer the shaders read, refilled each frame through its own upload buffer.
+struct StorageBuffer {
+    SDL_GPUBuffer* Buffer = nullptr;
+    SDL_GPUTransferBuffer* Upload = nullptr;
+    Uint32 Capacity = 0; // bytes
+
+    bool Fill(SDL_GPUCopyPass* copy, const void* data, Uint32 bytes) {
+        if (bytes == 0) return true;
+        if (bytes > Capacity) {
+            Uint32 capacity = std::max<Uint32>(64 * 1024, Capacity);
+            while (capacity < bytes) capacity *= 2;
+            Release();
+            SDL_GPUBufferCreateInfo bufferInfo{};
+            bufferInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+            bufferInfo.size = capacity;
+            Buffer = SDL_CreateGPUBuffer(Device, &bufferInfo);
+            SDL_GPUTransferBufferCreateInfo uploadInfo{};
+            uploadInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+            uploadInfo.size = capacity;
+            Upload = SDL_CreateGPUTransferBuffer(Device, &uploadInfo);
+            Capacity = Buffer && Upload ? capacity : 0;
+            if (!Capacity) {
+                Log::Error("Cannot make a GPU buffer of {} bytes: {}", bytes, SDL_GetError());
+                Release();
+                return false;
+            }
+        }
+        void* mapped = SDL_MapGPUTransferBuffer(Device, Upload, true); // cycle: last frame may still read it
+        if (!mapped) return false;
+        std::memcpy(mapped, data, bytes);
+        SDL_UnmapGPUTransferBuffer(Device, Upload);
+        SDL_GPUTransferBufferLocation source{Upload, 0};
+        SDL_GPUBufferRegion destination{Buffer, 0, bytes};
+        SDL_UploadToGPUBuffer(copy, &source, &destination, true);
+        return true;
+    }
+
+    void Release() {
+        if (Buffer) SDL_ReleaseGPUBuffer(Device, Buffer);
+        if (Upload) SDL_ReleaseGPUTransferBuffer(Device, Upload);
+        Buffer = nullptr;
+        Upload = nullptr;
+        Capacity = 0;
+    }
+};
+
+StorageBuffer SpriteBuffer, LightBuffer;
 std::vector<SpriteInstance> Instances;
 std::vector<SpriteBatch> Batches;
-SDL_GPUTexture* ScreenTarget = nullptr;
+bool SpritesReady = false, LightsReady = false;
+
+// The render targets, all at the screen's size except the bloom (half).
+struct Target {
+    SDL_GPUTexture* Texture = nullptr;
+    Uint32 Width = 0, Height = 0;
+};
+Target ScreenTarget, AlbedoTarget, NormalTarget, SceneTarget, BloomA, BloomB;
 Uint32 ScreenWidth = 0, ScreenHeight = 0;
 
 // This frame's requests.
@@ -78,6 +154,13 @@ SDL_GPUColorTargetBlendState AlphaBlend() {
     return blend;
 }
 
+// The colour already multiplied by its alpha (G-buffer and the light pass).
+SDL_GPUColorTargetBlendState PremultipliedBlend() {
+    SDL_GPUColorTargetBlendState blend = AlphaBlend();
+    blend.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+    return blend;
+}
+
 // Adds light: the colour times its alpha on top of what is there, the target's alpha unchanged.
 SDL_GPUColorTargetBlendState AdditiveBlend() {
     SDL_GPUColorTargetBlendState blend = AlphaBlend();
@@ -87,20 +170,27 @@ SDL_GPUColorTargetBlendState AdditiveBlend() {
     return blend;
 }
 
+SDL_GPUColorTargetBlendState NoBlend() { return {}; }
+
 SDL_GPUGraphicsPipeline* MakePipeline(SDL_GPUShader* vertex, SDL_GPUShader* fragment,
+                                      std::initializer_list<SDL_GPUTextureFormat> formats,
                                       SDL_GPUColorTargetBlendState blend) {
     if (!vertex || !fragment) return nullptr;
-    SDL_GPUColorTargetDescription target{};
-    target.format = ScreenFormat;
-    target.blend_state = blend;
+    SDL_GPUColorTargetDescription targets[4]{};
+    Uint32 count = 0;
+    for (SDL_GPUTextureFormat format : formats) {
+        targets[count].format = format;
+        targets[count].blend_state = blend;
+        ++count;
+    }
     SDL_GPUGraphicsPipelineCreateInfo info{};
     info.vertex_shader = vertex;
     info.fragment_shader = fragment;
     info.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     info.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
     info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-    info.target_info.color_target_descriptions = &target;
-    info.target_info.num_color_targets = 1;
+    info.target_info.color_target_descriptions = targets;
+    info.target_info.num_color_targets = count;
     SDL_GPUGraphicsPipeline* pipeline = SDL_CreateGPUGraphicsPipeline(Device, &info);
     if (!pipeline) Log::Error("SDL_CreateGPUGraphicsPipeline: {}", SDL_GetError());
     return pipeline;
@@ -119,77 +209,125 @@ SDL_GPUSampler* MakeSampler(SDL_GPUFilter filter) {
     return sampler;
 }
 
+#define BITMOTOR_SHADER(name, stage, ...)                                                                              \
+    MakeShader(Shaders::name, sizeof(Shaders::name), SDL_GPU_SHADERSTAGE_##stage, __VA_ARGS__)
+
 bool CreatePipelines() {
-    SDL_GPUShader* fullscreen =
-        MakeShader(Shaders::FullscreenVert, sizeof(Shaders::FullscreenVert), SDL_GPU_SHADERSTAGE_VERTEX, 0);
-    SDL_GPUShader* fill = MakeShader(Shaders::FillFrag, sizeof(Shaders::FillFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 1);
-    SDL_GPUShader* spriteVertex =
-        MakeShader(Shaders::SpriteVert, sizeof(Shaders::SpriteVert), SDL_GPU_SHADERSTAGE_VERTEX, 1, 0, 1);
-    SDL_GPUShader* spriteFragment =
-        MakeShader(Shaders::SpriteFrag, sizeof(Shaders::SpriteFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 1);
-    FillPipeline = MakePipeline(fullscreen, fill, AlphaBlend());
-    SpritePipeline = MakePipeline(spriteVertex, spriteFragment, AlphaBlend());
-    GlowPipeline = MakePipeline(spriteVertex, spriteFragment, AdditiveBlend());
-    for (SDL_GPUShader* shader : {fullscreen, fill, spriteVertex, spriteFragment})
+    SDL_GPUShader* fullscreen = BITMOTOR_SHADER(FullscreenVert, VERTEX, 0);
+    SDL_GPUShader* fill = BITMOTOR_SHADER(FillFrag, FRAGMENT, 1);
+    SDL_GPUShader* spriteVertex = BITMOTOR_SHADER(SpriteVert, VERTEX, 1, 0, 1);
+    SDL_GPUShader* sprite = BITMOTOR_SHADER(SpriteFrag, FRAGMENT, 0, 1);
+    SDL_GPUShader* world = BITMOTOR_SHADER(SpriteWorldFrag, FRAGMENT, 0, 2);
+    SDL_GPUShader* light = BITMOTOR_SHADER(LightFrag, FRAGMENT, 1, 2, 1);
+    SDL_GPUShader* extract = BITMOTOR_SHADER(BloomExtractFrag, FRAGMENT, 1, 1);
+    SDL_GPUShader* blur = BITMOTOR_SHADER(BloomBlurFrag, FRAGMENT, 1, 1);
+    SDL_GPUShader* composite = BITMOTOR_SHADER(CompositeFrag, FRAGMENT, 1, 2);
+
+    Pipeline.Fill = MakePipeline(fullscreen, fill, {ScreenFormat}, AlphaBlend());
+    Pipeline.Hud = MakePipeline(spriteVertex, sprite, {ScreenFormat}, AlphaBlend());
+    Pipeline.World = MakePipeline(spriteVertex, world, {GBufferFormat, GBufferFormat}, PremultipliedBlend());
+    Pipeline.Scene = MakePipeline(spriteVertex, sprite, {HdrFormat}, AlphaBlend());
+    Pipeline.Glow = MakePipeline(spriteVertex, sprite, {HdrFormat}, AdditiveBlend());
+    Pipeline.Light = MakePipeline(fullscreen, light, {HdrFormat}, PremultipliedBlend());
+    Pipeline.BloomExtract = MakePipeline(fullscreen, extract, {HdrFormat}, NoBlend());
+    Pipeline.BloomBlur = MakePipeline(fullscreen, blur, {HdrFormat}, NoBlend());
+    Pipeline.Composite = MakePipeline(fullscreen, composite, {ScreenFormat}, NoBlend());
+
+    for (SDL_GPUShader* shader : {fullscreen, fill, spriteVertex, sprite, world, light, extract, blur, composite})
         if (shader) SDL_ReleaseGPUShader(Device, shader);
     NearestSampler = MakeSampler(SDL_GPU_FILTER_NEAREST);
     LinearSampler = MakeSampler(SDL_GPU_FILTER_LINEAR);
-    return FillPipeline && SpritePipeline && GlowPipeline && NearestSampler && LinearSampler;
+    const std::uint8_t flat[4] = {128, 128, 255, 0};
+    FlatNormals = Texture::FromPixels(1, 1, flat);
+
+    for (SDL_GPUGraphicsPipeline* pipeline : Pipeline.All())
+        if (!pipeline) return false;
+    return NearestSampler && LinearSampler && FlatNormals;
 }
 
-// Copies this frame's sprites to the GPU (a copy pass, before the screen is drawn). False if there is no
-// room and no way to make it.
-bool UploadSprites(SDL_GPUCommandBuffer* commands) {
+SDL_GPUSampler* SamplerFor(const Texture& texture) {
+    return texture.GetFilter() == Filter::Linear ? LinearSampler : NearestSampler;
+}
+
+// Recreates a target when the screen changes size.
+bool Prepare(Target& target, SDL_GPUTextureFormat format, Uint32 width, Uint32 height) {
+    if (target.Texture && target.Width == width && target.Height == height) return true;
+    if (target.Texture) SDL_ReleaseGPUTexture(Device, target.Texture);
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = format;
+    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.width = width;
+    info.height = height;
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    target.Texture = SDL_CreateGPUTexture(Device, &info);
+    target.Width = target.Texture ? width : 0;
+    target.Height = target.Texture ? height : 0;
+    if (!target.Texture) Log::Error("Cannot create a {}x{} render target: {}", width, height, SDL_GetError());
+    return target.Texture != nullptr;
+}
+
+void Release(Target& target) {
+    if (target.Texture) SDL_ReleaseGPUTexture(Device, target.Texture);
+    target = {};
+}
+
+// The targets follow Screen::Size (the window's size when there is no logical resolution).
+bool PrepareTargets() {
+    Vec2 size = Screen::Size();
+    Uint32 width = Uint32(std::lround(size.X)), height = Uint32(std::lround(size.Y));
+    if (width == 0 || height == 0) return false; // minimised
+    Uint32 halfWidth = std::max<Uint32>(1, width / 2), halfHeight = std::max<Uint32>(1, height / 2);
+    bool ok = Prepare(ScreenTarget, ScreenFormat, width, height) &&
+              Prepare(AlbedoTarget, GBufferFormat, width, height) &&
+              Prepare(NormalTarget, GBufferFormat, width, height) && Prepare(SceneTarget, HdrFormat, width, height) &&
+              Prepare(BloomA, HdrFormat, halfWidth, halfHeight) && Prepare(BloomB, HdrFormat, halfWidth, halfHeight);
+    ScreenWidth = ok ? width : 0;
+    ScreenHeight = ok ? height : 0;
+    return ok;
+}
+
+// Copies this frame's sprites and lights to the GPU, before any pass draws.
+void Upload(SDL_GPUCommandBuffer* commands) {
     BuildSprites(SpriteQueue(), Instances, Batches);
-    if (Instances.empty()) return true;
-    Uint32 needed = Uint32(Instances.size());
-    if (needed > SpriteCapacity) {
-        Uint32 capacity = std::max<Uint32>(1024, SpriteCapacity);
-        while (capacity < needed) capacity *= 2;
-        if (SpriteBuffer) SDL_ReleaseGPUBuffer(Device, SpriteBuffer);
-        if (SpriteUpload) SDL_ReleaseGPUTransferBuffer(Device, SpriteUpload);
-        SDL_GPUBufferCreateInfo bufferInfo{};
-        bufferInfo.usage = SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
-        bufferInfo.size = capacity * Uint32(sizeof(SpriteInstance));
-        SpriteBuffer = SDL_CreateGPUBuffer(Device, &bufferInfo);
-        SDL_GPUTransferBufferCreateInfo uploadInfo{};
-        uploadInfo.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
-        uploadInfo.size = bufferInfo.size;
-        SpriteUpload = SDL_CreateGPUTransferBuffer(Device, &uploadInfo);
-        SpriteCapacity = SpriteBuffer && SpriteUpload ? capacity : 0;
-        if (!SpriteCapacity) {
-            Log::Error("Cannot make room for {} sprites: {}", needed, SDL_GetError());
-            return false;
-        }
-    }
-    const Uint32 bytes = needed * Uint32(sizeof(SpriteInstance));
-    void* mapped = SDL_MapGPUTransferBuffer(Device, SpriteUpload, true); // cycle: last frame may still read it
-    if (!mapped) return false;
-    std::memcpy(mapped, Instances.data(), bytes);
-    SDL_UnmapGPUTransferBuffer(Device, SpriteUpload);
+    const std::vector<LightInstance>& lights = LightQueue();
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
-    SDL_GPUTransferBufferLocation source{SpriteUpload, 0};
-    SDL_GPUBufferRegion destination{SpriteBuffer, 0, bytes};
-    SDL_UploadToGPUBuffer(copy, &source, &destination, true);
+    SpritesReady = SpriteBuffer.Fill(copy, Instances.data(), Uint32(Instances.size() * sizeof(SpriteInstance)));
+    LightsReady = LightBuffer.Fill(copy, lights.data(), Uint32(lights.size() * sizeof(LightInstance)));
     SDL_EndGPUCopyPass(copy);
-    return true;
+    if (!SpritesReady) Instances.clear();
 }
 
-void DrawSprites(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass) {
-    if (Instances.empty() || !SpriteBuffer) return;
-    SDL_BindGPUVertexStorageBuffers(pass, 0, &SpriteBuffer, 1);
+bool HasLayer(Layer layer) {
+    return std::any_of(Batches.begin(), Batches.end(), [&](const SpriteBatch& b) { return b.Where == layer; });
+}
+
+// The batches of some layers, with `pipeline`. World batches also bind their normal maps.
+void DrawBatches(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, SDL_GPUGraphicsPipeline* pipeline,
+                 std::initializer_list<Layer> layers, SDL_GPUGraphicsPipeline* glow = nullptr) {
+    if (Instances.empty() || !SpriteBuffer.Buffer) return;
+    SDL_BindGPUVertexStorageBuffers(pass, 0, &SpriteBuffer.Buffer, 1);
     SDL_GPUGraphicsPipeline* bound = nullptr;
     for (const SpriteBatch& batch : Batches) {
+        if (std::find(layers.begin(), layers.end(), batch.Where) == layers.end()) continue;
         SDL_GPUTexture* texture = GpuTexture(*batch.Source.Internal());
         if (!texture) continue;
-        SDL_GPUGraphicsPipeline* pipeline = batch.Where == Layer::Glow ? GlowPipeline : SpritePipeline;
-        if (pipeline != bound) {
-            SDL_BindGPUGraphicsPipeline(pass, pipeline);
-            bound = pipeline;
+        SDL_GPUGraphicsPipeline* use = batch.Where == Layer::Glow && glow ? glow : pipeline;
+        if (use != bound) {
+            SDL_BindGPUGraphicsPipeline(pass, use);
+            bound = use;
         }
-        SDL_GPUTextureSamplerBinding binding{texture, batch.Source.GetFilter() == Filter::Linear ? LinearSampler
-                                                                                                 : NearestSampler};
-        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        SDL_GPUTextureSamplerBinding bindings[2] = {{texture, SamplerFor(batch.Source)}, {}};
+        Uint32 count = 1;
+        if (batch.Where == Layer::World) {
+            Texture normals = batch.Source.Normals() ? batch.Source.Normals() : FlatNormals;
+            SDL_GPUTexture* normalTexture = GpuTexture(*normals.Internal());
+            if (!normalTexture) normalTexture = GpuTexture(*FlatNormals.Internal());
+            bindings[1] = {normalTexture, SamplerFor(normals)};
+            count = 2;
+        }
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, count);
         SpriteUniforms uniforms{float(ScreenWidth),
                                 float(ScreenHeight),
                                 float(batch.First),
@@ -203,39 +341,108 @@ void DrawSprites(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass) {
     }
 }
 
-// The screen target follows Screen::Size (the window's size when there is no logical resolution).
-bool PrepareScreenTarget() {
-    Vec2 size = Screen::Size();
-    Uint32 width = Uint32(std::lround(size.X)), height = Uint32(std::lround(size.Y));
-    if (width == 0 || height == 0) return false; // minimised
-    if (ScreenTarget && width == ScreenWidth && height == ScreenHeight) return true;
-    if (ScreenTarget) SDL_ReleaseGPUTexture(Device, ScreenTarget);
-    SDL_GPUTextureCreateInfo info{};
-    info.type = SDL_GPU_TEXTURETYPE_2D;
-    info.format = ScreenFormat;
-    info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    info.width = width;
-    info.height = height;
-    info.layer_count_or_depth = 1;
-    info.num_levels = 1;
-    ScreenTarget = SDL_CreateGPUTexture(Device, &info);
-    ScreenWidth = ScreenTarget ? width : 0;
-    ScreenHeight = ScreenTarget ? height : 0;
-    if (!ScreenTarget) Log::Error("Cannot create the screen target ({}x{}): {}", width, height, SDL_GetError());
-    return ScreenTarget != nullptr;
+SDL_GPURenderPass* BeginPass(SDL_GPUCommandBuffer* commands, std::initializer_list<SDL_GPUTexture*> textures,
+                             SDL_GPULoadOp load, Color clear = Colors::Transparent) {
+    SDL_GPUColorTargetInfo targets[4]{};
+    Uint32 count = 0;
+    for (SDL_GPUTexture* texture : textures) {
+        targets[count].texture = texture;
+        targets[count].clear_color = {clear.R, clear.G, clear.B, clear.A};
+        targets[count].load_op = load;
+        targets[count].store_op = SDL_GPU_STOREOP_STORE;
+        ++count;
+    }
+    return SDL_BeginGPURenderPass(commands, targets, count, nullptr);
 }
 
-void DrawScreen(SDL_GPUCommandBuffer* commands) {
-    SDL_GPUColorTargetInfo target{};
-    target.texture = ScreenTarget;
-    target.clear_color = {ClearColor.R, ClearColor.G, ClearColor.B, ClearColor.A};
-    target.load_op = SDL_GPU_LOADOP_CLEAR;
-    target.store_op = SDL_GPU_STOREOP_STORE;
-    SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &target, 1, nullptr);
-    DrawSprites(commands, pass);
-    // Fills (scene fades) cover every layer.
+void Fullscreen(SDL_GPURenderPass* pass, SDL_GPUGraphicsPipeline* pipeline,
+                std::initializer_list<SDL_GPUTextureSamplerBinding> samplers) {
+    SDL_BindGPUGraphicsPipeline(pass, pipeline);
+    if (samplers.size()) SDL_BindGPUFragmentSamplers(pass, 0, samplers.begin(), Uint32(samplers.size()));
+    SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+}
+
+void DrawScene(SDL_GPUCommandBuffer* commands) {
+    // 1. The World into the G-buffer.
+    const bool world = HasLayer(Layer::World);
+    if (world) {
+        SDL_GPURenderPass* pass =
+            BeginPass(commands, {AlbedoTarget.Texture, NormalTarget.Texture}, SDL_GPU_LOADOP_CLEAR);
+        DrawBatches(commands, pass, Pipeline.World, {Layer::World});
+        SDL_EndGPURenderPass(pass);
+    }
+
+    // 2. The scene: background, the lit world, glow and overlay.
+    SDL_GPURenderPass* pass = BeginPass(commands, {SceneTarget.Texture}, SDL_GPU_LOADOP_CLEAR, ClearColor);
+    DrawBatches(commands, pass, Pipeline.Scene, {Layer::Background});
+    if (world) {
+        const std::vector<LightInstance>& lights = LightQueue();
+        float count = Lighting::Enabled() && LightsReady && LightBuffer.Buffer ? float(lights.size()) : 0.0f;
+        Color ambient = Lighting::Ambient();
+        float params[8] = {ambient.R,
+                           ambient.G,
+                           ambient.B,
+                           count,
+                           Lighting::Enabled() ? 1.0f : 0.0f,
+                           Lighting::Stepped() ? 1.0f : 0.0f,
+                           0,
+                           0};
+        SDL_BindGPUGraphicsPipeline(pass, Pipeline.Light);
+        SDL_GPUTextureSamplerBinding gbuffer[2] = {{AlbedoTarget.Texture, NearestSampler},
+                                                   {NormalTarget.Texture, NearestSampler}};
+        SDL_BindGPUFragmentSamplers(pass, 0, gbuffer, 2);
+        // A storage buffer must be bound even with no lights: any one will do, the count says 0.
+        SDL_GPUBuffer* lightBuffer = LightBuffer.Buffer ? LightBuffer.Buffer : SpriteBuffer.Buffer;
+        SDL_BindGPUFragmentStorageBuffers(pass, 0, &lightBuffer, 1);
+        SDL_PushGPUFragmentUniformData(commands, 0, params, sizeof(params));
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    }
+    DrawBatches(commands, pass, Pipeline.Scene, {Layer::Glow, Layer::Overlay}, Pipeline.Glow);
+    SDL_EndGPURenderPass(pass);
+
+    // 3. Bloom.
+    if (Lighting::Bloom() > 0) {
+        float threshold[4] = {Lighting::BloomThreshold(), 0, 0, 0};
+        pass = BeginPass(commands, {BloomA.Texture}, SDL_GPU_LOADOP_DONT_CARE);
+        SDL_PushGPUFragmentUniformData(commands, 0, threshold, sizeof(threshold));
+        Fullscreen(pass, Pipeline.BloomExtract, {{SceneTarget.Texture, LinearSampler}});
+        SDL_EndGPURenderPass(pass);
+        float across[4] = {1.0f / float(BloomA.Width), 0, 0, 0}, down[4] = {0, 1.0f / float(BloomA.Height), 0, 0};
+        pass = BeginPass(commands, {BloomB.Texture}, SDL_GPU_LOADOP_DONT_CARE);
+        SDL_PushGPUFragmentUniformData(commands, 0, across, sizeof(across));
+        Fullscreen(pass, Pipeline.BloomBlur, {{BloomA.Texture, LinearSampler}});
+        SDL_EndGPURenderPass(pass);
+        pass = BeginPass(commands, {BloomA.Texture}, SDL_GPU_LOADOP_DONT_CARE);
+        SDL_PushGPUFragmentUniformData(commands, 0, down, sizeof(down));
+        Fullscreen(pass, Pipeline.BloomBlur, {{BloomB.Texture, LinearSampler}});
+        SDL_EndGPURenderPass(pass);
+    }
+
+    // 4. The screen: composite with the effects and the flash, the Hud, the fades.
+    const ScreenEffects& effects = Screen::Effects();
+    Color flash = FlashColor();
+    float composite[16] = {Lighting::Bloom(),
+                           Lighting::Enabled() ? 1.0f : 0.0f,
+                           float(Time::Total()),
+                           0,
+                           effects.Vignette,
+                           effects.Grain,
+                           effects.Aberration,
+                           effects.Saturation,
+                           flash.R,
+                           flash.G,
+                           flash.B,
+                           FlashAmount(),
+                           float(ScreenWidth),
+                           float(ScreenHeight),
+                           0,
+                           0};
+    pass = BeginPass(commands, {ScreenTarget.Texture}, SDL_GPU_LOADOP_DONT_CARE);
+    SDL_PushGPUFragmentUniformData(commands, 0, composite, sizeof(composite));
+    Fullscreen(pass, Pipeline.Composite, {{SceneTarget.Texture, NearestSampler}, {BloomA.Texture, LinearSampler}});
+    DrawBatches(commands, pass, Pipeline.Hud, {Layer::Hud});
     if (!Fills.empty()) {
-        SDL_BindGPUGraphicsPipeline(pass, FillPipeline);
+        SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
         for (const Color& fill : Fills) {
             SDL_PushGPUFragmentUniformData(commands, 0, &fill, sizeof(Color));
             SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
@@ -255,7 +462,7 @@ void Present(SDL_GPUCommandBuffer* commands) {
     if (!swapchain) return; // minimised or not ready: nothing to show this frame
     Rect view = ViewportFor({float(width), float(height)});
     SDL_GPUBlitInfo blit{};
-    blit.source.texture = ScreenTarget;
+    blit.source.texture = ScreenTarget.Texture;
     blit.source.w = ScreenWidth;
     blit.source.h = ScreenHeight;
     blit.destination.texture = swapchain;
@@ -280,7 +487,7 @@ SDL_GPUTransferBuffer* StartDownload(SDL_GPUCommandBuffer* commands) {
     }
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
     SDL_GPUTextureRegion source{};
-    source.texture = ScreenTarget;
+    source.texture = ScreenTarget.Texture;
     source.w = ScreenWidth;
     source.h = ScreenHeight;
     source.d = 1;
@@ -357,20 +564,18 @@ bool StartRenderer(SDL_Window* window, bool vsync) {
 void StopRenderer() {
     if (!Device) return;
     SDL_WaitForGPUIdle(Device);
+    FlatNormals = {};
     ReleaseTextures();
-    if (ScreenTarget) SDL_ReleaseGPUTexture(Device, ScreenTarget);
-    for (SDL_GPUGraphicsPipeline* pipeline : {FillPipeline, SpritePipeline, GlowPipeline})
+    for (Target* target : {&ScreenTarget, &AlbedoTarget, &NormalTarget, &SceneTarget, &BloomA, &BloomB})
+        Release(*target);
+    for (SDL_GPUGraphicsPipeline* pipeline : Pipeline.All())
         if (pipeline) SDL_ReleaseGPUGraphicsPipeline(Device, pipeline);
+    Pipeline = {};
     for (SDL_GPUSampler* sampler : {NearestSampler, LinearSampler})
         if (sampler) SDL_ReleaseGPUSampler(Device, sampler);
-    if (SpriteBuffer) SDL_ReleaseGPUBuffer(Device, SpriteBuffer);
-    if (SpriteUpload) SDL_ReleaseGPUTransferBuffer(Device, SpriteUpload);
-    ScreenTarget = nullptr;
-    FillPipeline = SpritePipeline = GlowPipeline = nullptr;
     NearestSampler = LinearSampler = nullptr;
-    SpriteBuffer = nullptr;
-    SpriteUpload = nullptr;
-    SpriteCapacity = 0;
+    SpriteBuffer.Release();
+    LightBuffer.Release();
     Instances.clear();
     Batches.clear();
     ResetSprites();
@@ -396,6 +601,7 @@ void BeginFrame2D() {
 }
 
 void EndFrame2D() {
+    AdvanceFlash(Time::RealDelta());
     if (!Device) return;
     SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(Device);
     if (!commands) {
@@ -403,9 +609,9 @@ void EndFrame2D() {
         return;
     }
     SDL_GPUTransferBuffer* download = nullptr;
-    if (PrepareScreenTarget()) {
-        if (!UploadSprites(commands)) Instances.clear();
-        DrawScreen(commands);
+    if (PrepareTargets()) {
+        Upload(commands);
+        DrawScene(commands);
         if (!ScreenshotPath.empty()) download = StartDownload(commands);
         Present(commands);
     }

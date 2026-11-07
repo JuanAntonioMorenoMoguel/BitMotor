@@ -38,6 +38,10 @@ public:
     int Height() const;
     Vec2 Size() const { return {float(Width()), float(Height())}; }
     Filter GetFilter() const;
+    // The normal map that lights this texture in the World layer (same size; xy: the normal, alpha: how
+    // much the pixel glows by itself). Atlas::Load sets it from atlas_n.png. Without one, it is flat.
+    void SetNormals(const Texture& normals) const;
+    Texture Normals() const;
     // The whole image as a Region, with its pivot at `pivot` (in pixels; the top-left corner by default).
     Region Full(Vec2 pivot = {0, 0}) const;
 

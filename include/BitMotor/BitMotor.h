@@ -36,4 +36,5 @@
 #include "BitMotor/Render/Texture.h"
 #include "BitMotor/Render/Atlas.h"
 #include "BitMotor/Render/Camera.h"
+#include "BitMotor/Render/Light.h"
 #include "BitMotor/Render/Sprite.h"

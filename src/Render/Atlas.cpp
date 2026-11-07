@@ -159,6 +159,10 @@ Atlas Atlas::Load(const std::filesystem::path& json) {
     imagePath.replace_extension(".png");
     Texture image = Texture::Load(imagePath, filter);
     if (!image) return {};
+    // The normal map, if there is one: atlas_n.png next to atlas.png.
+    std::filesystem::path normalPath = full;
+    normalPath.replace_filename(full.stem().string() + "_n.png");
+    if (Files::Exists(normalPath)) image.SetNormals(Texture::Load(normalPath, filter));
     Atlas atlas = Parse(*text, image, full.filename().string());
     if (atlas) Log::Info("Atlas {}: {} sprites", full.filename().string(), atlas.Data->Frames.size());
     return atlas;

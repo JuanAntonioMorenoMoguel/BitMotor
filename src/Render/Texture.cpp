@@ -115,6 +115,17 @@ Texture Texture::Load(const std::filesystem::path& path, Filter filter) {
     return FromPixels(image.Width, image.Height, image.Pixels, filter);
 }
 
+void Texture::SetNormals(const Texture& normals) const {
+    if (!Data) return;
+    if (normals && (normals.Width() != Width() || normals.Height() != Height()))
+        Log::Warn("Texture::SetNormals: the normal map is {}x{}, the texture {}x{}", normals.Width(), normals.Height(),
+                  Width(), Height());
+    if (normals.Data == Data) return; // a texture cannot be its own normal map
+    Data->Normals = normals;
+}
+
+Texture Texture::Normals() const { return Data ? Data->Normals : Texture(); }
+
 int Texture::Width() const { return Data ? Data->Width : 0; }
 int Texture::Height() const { return Data ? Data->Height : 0; }
 Filter Texture::GetFilter() const { return Data ? Data->Look : Filter::Nearest; }

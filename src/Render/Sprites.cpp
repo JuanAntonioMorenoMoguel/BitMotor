@@ -112,6 +112,7 @@ std::vector<QueuedSprite>& SpriteQueue() { return Queue; }
 
 void ResetSprites() {
     Queue.clear();
+    LightQueue().clear();
     Active = DefaultCamera();
 }
 
