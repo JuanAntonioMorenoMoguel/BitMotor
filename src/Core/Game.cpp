@@ -59,6 +59,7 @@ void PollEvents() {
             Events::Emit(FocusChanged{false});
             break;
         default:
+            Detail::HandleInputEvent(event);
             break;
         }
     }
