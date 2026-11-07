@@ -54,12 +54,13 @@ function(BitMotor_Prepare target)
     endforeach()
 endfunction()
 
-# Internal: each BitMotor example is a folder with a Main.cpp.
+# Internal: each BitMotor example is a folder with a Main.cpp (COPY folders are relative to examples/).
 #     BitMotor_Example(00_Window)
+#     BitMotor_Example(04_Sprites COPY 04_Sprites/Assets)
 function(BitMotor_Example name)
     set(target BitMotor_${name})
     add_executable(${target} ${name}/Main.cpp)
     target_link_libraries(${target} PRIVATE BitMotor::BitMotor)
     _BitMotor_Warnings(${target})
-    BitMotor_Prepare(${target})
+    BitMotor_Prepare(${target} ${ARGN})
 endfunction()
