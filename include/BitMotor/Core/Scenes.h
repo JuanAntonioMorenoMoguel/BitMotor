@@ -86,6 +86,8 @@ public:
     virtual void Update() {}
     // Each frame while it draws; after its managers.
     virtual void Draw() {}
+    // While the debug panel is open (F1), every frame, for every scene in the stack: ImGui calls.
+    virtual void DebugPanel() {}
 
     // The scene below also updates (a HUD scene over the level).
     bool UpdateBelow = false;

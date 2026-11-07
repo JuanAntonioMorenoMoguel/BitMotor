@@ -3,8 +3,8 @@
 #include "BitMotor/Core/Events.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Time.h"
-#include "Render/RendererInternal.h"
 #include "Core/ScenesInternal.h"
+#include "Render/RendererInternal.h"
 
 #include <cstdlib>
 
@@ -188,6 +188,10 @@ void DrawScenes() {
     if (!Stack.empty())
         for (std::size_t i = Lowest(SceneAccess::DrawsBelow); i < Stack.size(); ++i) SceneAccess::Draw(*Stack[i]);
     if (float alpha = SceneFade(); alpha > 0) FillScreen(FadeTint.WithAlpha(FadeTint.A * alpha));
+}
+
+void DebugPanelScenes() {
+    for (std::size_t i = 0; i < Stack.size(); ++i) Stack[i]->DebugPanel();
 }
 
 float SceneFade() {

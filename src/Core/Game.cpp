@@ -17,6 +17,8 @@
 #include "Core/SettingsInternal.h"
 #include "Core/TasksInternal.h"
 #include "Core/TimeInternal.h"
+#include "Render/DebugPanelInternal.h"
+#include "Render/GpuInternal.h"
 #include "Render/ImageInternal.h"
 #include "Render/RendererInternal.h"
 #include "UI/UiInternal.h"
@@ -43,6 +45,7 @@ long long MaxFrames() {
 void PollEvents() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        const bool panelTookIt = Detail::DebugPanelEvent(event); // the panel sees every event first
         switch (event.type) {
         case SDL_EVENT_QUIT:
             QuitRequested = true;
@@ -59,6 +62,7 @@ void PollEvents() {
             Events::Emit(FocusChanged{false});
             break;
         default:
+            if (!panelTookIt) Detail::HandleInputEvent(event);
             break;
         }
     }
@@ -81,7 +85,7 @@ void Quit() { QuitRequested = true; }
 
 namespace Detail {
 
-int Run(const Config& config, Game& game) {
+int Run(const Config& config, Game& game, void (*setup)()) {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         Log::Error("SDL_Init: {}", SDL_GetError());
         return 1;
@@ -109,6 +113,9 @@ int Run(const Config& config, Game& game) {
         return 1;
     }
 
+    StartDebugPanel(window);
+    SetDebugPanelOpen(Args::Has("--debug"));
+
     ResetTime(config.TickRate);
     StartInput();
     StartAudio();
@@ -117,6 +124,7 @@ int Run(const Config& config, Game& game) {
     const std::string lastShot = Args::Get("--screenshot");
     if (!lastShot.empty() && maxFrames == 0) Log::Warn("--screenshot needs --frames N");
     QuitRequested = false;
+    if (setup) setup();
     Log::Info("{}{}{} (BitMotor {})", config.Title, config.Version.empty() ? "" : " ", config.Version, Version());
     game.Start();
     ApplySceneChanges(); // the first scene enters before the first Update
@@ -150,6 +158,10 @@ int Run(const Config& config, Game& game) {
         DrawScenes();
         game.Draw();
         EndUi();
+        BuildDebugPanel([&game] {
+            game.DebugPanel();
+            DebugPanelScenes();
+        });
         if (!lastShot.empty() && maxFrames > 0 && frame + 1 == maxFrames)
             Screen::Screenshot(std::filesystem::absolute(std::filesystem::path(lastShot)));
         EndFrame2D();
@@ -160,11 +172,13 @@ int Run(const Config& config, Game& game) {
     ShutdownScenes();
     ClearTasks();
     game.Stop();
-    StopServices(); // after the game's Stop, which may still use them
+    ShutdownCustomRenderer(); // before its service goes
+    StopServices();           // after the game's Stop, which may still use them
     FlushEvents();
     StopInput();
     StopAudio();
     ResetAudio();
+    StopDebugPanel();
     StopRenderer();
     AttachDisplay(nullptr, 0, 0, vsync, config.IntegerScaling);
     ForgetSettings();

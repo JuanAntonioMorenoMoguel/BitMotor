@@ -3,10 +3,28 @@
 A C++20 library to make simple games. It unifies nyiengilib and is the base that ProjectEGIDA, MONOCHROME and
 RogueInvasion will migrate to. The full design (modules, API and roadmap) is in [docs/BitMotor.md](docs/BitMotor.md).
 
-> **Status: phase 5 done.** Core (phase 1), architecture (2: Services, Scenes, Managers, Tasks, Settings),
+> **Status: phase 7 done (v1.0 of the plan).** Core (phase 1), architecture (2: Services, Scenes, Managers, Tasks, Settings),
 > 2D rendering (3: SDL_GPU, sprites, atlas, camera, lighting, particles), text and UI (4: fonts, Rich text,
 > Typewriter, translations with `Tr`, shapes and immediate widgets) and audio (5: sounds from files or
-> functions, music with crossfades, procedural music and BitMusic songs, see [docs/BitMusic.md](docs/BitMusic.md)).
+> functions, music with crossfades, procedural music and BitMusic songs, see [docs/BitMusic.md](docs/BitMusic.md)) and
+> custom renderers (7: `CustomRenderer` with its own GLSL shaders, pipelines, buffers and targets on SDL_GPU,
+> `BitMotor_Shaders` in CMake, and the debug panel with Dear ImGui: F1 or `--debug`).
+> Phase 6 (Platform) is parked for now.
+
+## Drawing your own way
+
+A game that needs its own shaders gives `Run` a second type, a `CustomRenderer`; BitMotor keeps the window, the
+scaling, screenshots, scene fades and the debug panel. See `examples/10_CustomRenderer` and the comments in
+`include/BitMotor/Render/CustomRenderer.h` and `Gpu.h` (not included by `BitMotor.h`). In the game's CMake:
+
+```cmake
+BitMotor_Prepare(MyGame COPY Assets)
+BitMotor_Shaders(MyGame shaders)   # shaders/*.vert, *.frag -> shaders/<name>.<stage>.spv next to the exe
+```
+
+Shader resources follow SDL_GPU's sets: in the vertex stage set 0 holds samplers and storage buffers and set 1
+the uniform blocks; in the fragment stage, sets 2 and 3. Uniform block 0 of both is `Gpu::Globals` (time, screen
+size, mouse and `Gpu::SetGlobal` values); the game's own blocks are 1 to 3 (`Frame::Push`).
 
 ## Building
 
@@ -82,7 +100,7 @@ int main() { return Run<MyGame>({.Title = "My game"}); }
 |---|---|
 | `include/BitMotor/` | Public headers. `BitMotor.h` includes everything; one folder per module (`Core/`, ...) |
 | `src/` | Implementation, one folder per module. Third-party headers (SDL3...) never leak into the public ones |
-| `cmake/BitMotor.cmake` | `BitMotor_Prepare` and internal helpers |
+| `cmake/BitMotor.cmake` | `BitMotor_Prepare`, `BitMotor_Shaders` (a game's GLSL to SPIR-V) and internal helpers |
 | `cmake/CompileShaders.cmake` | Turns BitMotor's own shaders (`src/Render/Shaders`) into `Compiled.h`, which is committed. Only needed after editing a shader: `cmake -P cmake/CompileShaders.cmake` (glslc or glslangValidator from the Vulkan SDK) |
 | `tests/` | Internal tests with a tiny framework (`TEST`, `CHECK`, `CHECK_EQ`, `CHECK_NEAR`). `BitMotorTests <filter>` runs only the tests whose name contains the filter |
 | `examples/` | One folder per example with a single `Main.cpp`. They also run in ctest with `--frames 60` |
@@ -102,5 +120,6 @@ Everything lives in `namespace BitMotor`. Formatting with `.clang-format` (4 spa
 | nlohmann-json | 3.12.0 | Reading and writing JSON in `Data` (never visible in BitMotor's headers) |
 | miniaudio | 0.11 | The audio device, and decoding WAV, FLAC and MP3 (compiled inside BitMotor) |
 | stb (stb_vorbis) | 2024-07-29 | Decoding OGG Vorbis, through miniaudio |
+| imgui (sdl3-binding, sdlgpu3-binding) | 1.93.0 | The debug panel (`Game::DebugPanel`, `Scene::DebugPanel`), public so games can call `ImGui::` |
 
 More dependencies are added in the phase that needs them.

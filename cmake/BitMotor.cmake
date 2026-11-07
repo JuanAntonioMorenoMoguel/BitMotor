@@ -54,6 +54,52 @@ function(BitMotor_Prepare target)
     endforeach()
 endfunction()
 
+# Compiles a game's GLSL shaders to SPIR-V when the game builds, for Shader::Load.
+#     BitMotor_Shaders(MyGame shaders)
+# Every .vert, .frag and .comp in <source>/shaders becomes <name>.<stage>.spv next to the executable, in a
+# folder of the same name: Shader::Load("shaders/shapes.frag.spv", ShaderStage::Fragment, ...). Needs glslc
+# or glslangValidator (Vulkan SDK). A shader with an error fails the build with the compiler's message.
+function(BitMotor_Shaders target folder)
+    find_program(BITMOTOR_GLSLC glslc HINTS "$ENV{VULKAN_SDK}/bin" "$ENV{VULKAN_SDK}/Bin")
+    find_program(BITMOTOR_GLSLANG glslangValidator HINTS "$ENV{VULKAN_SDK}/bin" "$ENV{VULKAN_SDK}/Bin")
+    if(NOT BITMOTOR_GLSLC AND NOT BITMOTOR_GLSLANG)
+        message(FATAL_ERROR "BitMotor_Shaders: neither glslc nor glslangValidator found (install the Vulkan SDK)")
+    endif()
+    file(GLOB sources CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/${folder}/*.vert"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${folder}/*.frag"
+        "${CMAKE_CURRENT_SOURCE_DIR}/${folder}/*.comp")
+    file(GLOB includes CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${folder}/*.glsl")
+    set(out "${CMAKE_CURRENT_BINARY_DIR}/BitMotorShaders/${target}/${folder}")
+    set(outputs "")
+    foreach(source ${sources})
+        get_filename_component(name "${source}" NAME)
+        set(spv "${out}/${name}.spv")
+        if(BITMOTOR_GLSLC)
+            set(command "${BITMOTOR_GLSLC}" --target-env=vulkan1.0 -O "-I${CMAKE_CURRENT_SOURCE_DIR}/${folder}"
+                "${source}" -o "${spv}")
+        else()
+            set(command "${BITMOTOR_GLSLANG}" -V --target-env vulkan1.0 "-I${CMAKE_CURRENT_SOURCE_DIR}/${folder}"
+                "${source}" -o "${spv}")
+        endif()
+        add_custom_command(OUTPUT "${spv}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${out}"
+            COMMAND ${command}
+            DEPENDS "${source}" ${includes}
+            COMMENT "Shader ${folder}/${name}"
+            VERBATIM)
+        list(APPEND outputs "${spv}")
+    endforeach()
+    if(NOT outputs)
+        message(WARNING "BitMotor_Shaders: no .vert, .frag or .comp in ${CMAKE_CURRENT_SOURCE_DIR}/${folder}")
+        return()
+    endif()
+    add_custom_target(${target}_Shaders DEPENDS ${outputs})
+    add_dependencies(${target} ${target}_Shaders)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${out}" "$<TARGET_FILE_DIR:${target}>/${folder}")
+endfunction()
+
 # Internal: each BitMotor example is a folder with a Main.cpp (COPY folders are relative to examples/).
 #     BitMotor_Example(00_Window)
 #     BitMotor_Example(04_Sprites COPY 04_Sprites/Assets)

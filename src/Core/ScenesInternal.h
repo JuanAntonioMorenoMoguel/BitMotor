@@ -10,6 +10,8 @@ namespace BitMotor::Detail {
 void ApplySceneChanges();
 void UpdateScenes();
 void DrawScenes();
+// The debug panels of every scene in the stack, bottom first.
+void DebugPanelScenes();
 void ShutdownScenes();
 // How dark the fade is now, 0..1 (0: no fade).
 float SceneFade();

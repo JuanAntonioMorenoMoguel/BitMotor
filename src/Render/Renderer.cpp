@@ -12,6 +12,8 @@
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Render/Light.h"
 #include "Core/DisplayInternal.h"
+#include "Render/DebugPanelInternal.h"
+#include "Render/GpuInternal.h"
 #include "Render/ImageInternal.h"
 #include "Render/Shaders/Compiled.h"
 #include "Render/SpritesInternal.h"
@@ -45,9 +47,10 @@ struct Pipelines {
     SDL_GPUGraphicsPipeline* BloomExtract = nullptr;
     SDL_GPUGraphicsPipeline* BloomBlur = nullptr;
     SDL_GPUGraphicsPipeline* Composite = nullptr;
+    SDL_GPUGraphicsPipeline* HudGlow = nullptr; // additive sprites on an 8-bit target (Frame::Draw2D)
 
-    std::array<SDL_GPUGraphicsPipeline*, 9> All() const {
-        return {Fill, Hud, World, Scene, Glow, Light, BloomExtract, BloomBlur, Composite};
+    std::array<SDL_GPUGraphicsPipeline*, 10> All() const {
+        return {Fill, Hud, World, Scene, Glow, Light, BloomExtract, BloomBlur, Composite, HudGlow};
     }
 } Pipeline;
 
@@ -232,6 +235,7 @@ bool CreatePipelines() {
     Pipeline.BloomExtract = MakePipeline(fullscreen, extract, {HdrFormat}, NoBlend());
     Pipeline.BloomBlur = MakePipeline(fullscreen, blur, {HdrFormat}, NoBlend());
     Pipeline.Composite = MakePipeline(fullscreen, composite, {ScreenFormat}, NoBlend());
+    Pipeline.HudGlow = MakePipeline(spriteVertex, sprite, {ScreenFormat}, AdditiveBlend());
 
     for (SDL_GPUShader* shader : {fullscreen, fill, spriteVertex, sprite, world, light, extract, blur, composite})
         if (shader) SDL_ReleaseGPUShader(Device, shader);
@@ -245,9 +249,7 @@ bool CreatePipelines() {
     return NearestSampler && LinearSampler && FlatNormals;
 }
 
-SDL_GPUSampler* SamplerFor(const Texture& texture) {
-    return texture.GetFilter() == Filter::Linear ? LinearSampler : NearestSampler;
-}
+SDL_GPUSampler* SamplerFor(const Texture& texture) { return Detail::SamplerFor(texture.GetFilter()); }
 
 // Recreates a target when the screen changes size.
 bool Prepare(Target& target, SDL_GPUTextureFormat format, Uint32 width, Uint32 height) {
@@ -279,6 +281,12 @@ bool PrepareTargets() {
     Uint32 width = Uint32(std::lround(size.X)), height = Uint32(std::lround(size.Y));
     if (width == 0 || height == 0) return false; // minimised
     Uint32 halfWidth = std::max<Uint32>(1, width / 2), halfHeight = std::max<Uint32>(1, height / 2);
+    if (ActiveRenderer()) { // only the screen: the renderer makes its own targets
+        bool ok = Prepare(ScreenTarget, ScreenFormat, width, height);
+        ScreenWidth = ok ? width : 0;
+        ScreenHeight = ok ? height : 0;
+        return ok;
+    }
     bool ok = Prepare(ScreenTarget, ScreenFormat, width, height) &&
               Prepare(AlbedoTarget, GBufferFormat, width, height) &&
               Prepare(NormalTarget, GBufferFormat, width, height) && Prepare(SceneTarget, HdrFormat, width, height) &&
@@ -320,7 +328,7 @@ void DrawBatches(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, SDL_GP
         }
         SDL_GPUTextureSamplerBinding bindings[2] = {{texture, SamplerFor(batch.Source)}, {}};
         Uint32 count = 1;
-        if (batch.Where == Layer::World) {
+        if (batch.Where == Layer::World && use == Pipeline.World) {
             Texture normals = batch.Source.Normals() ? batch.Source.Normals() : FlatNormals;
             SDL_GPUTexture* normalTexture = GpuTexture(*normals.Internal());
             if (!normalTexture) normalTexture = GpuTexture(*FlatNormals.Internal());
@@ -451,6 +459,27 @@ void DrawScene(SDL_GPUCommandBuffer* commands) {
     SDL_EndGPURenderPass(pass);
 }
 
+// A CustomRenderer's frame into the screen target, then the scene fades on top.
+void DrawCustom(SDL_GPUCommandBuffer* commands) {
+    static TargetData screen;
+    screen.External = true;
+    screen.Native = ScreenTarget.Texture;
+    screen.Width = int(ScreenWidth);
+    screen.Height = int(ScreenHeight);
+    screen.Format = TargetFormat::Rgba8;
+    screen.Look = Filter::Nearest;
+    UpdateGlobals(Time::RealDelta());
+    RenderCustom(commands, screen);
+    if (Fills.empty()) return;
+    SDL_GPURenderPass* pass = BeginPass(commands, {ScreenTarget.Texture}, SDL_GPU_LOADOP_LOAD);
+    SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
+    for (const Color& fill : Fills) {
+        SDL_PushGPUFragmentUniformData(commands, 0, &fill, sizeof(Color));
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    }
+    SDL_EndGPURenderPass(pass);
+}
+
 // Scales the screen target into the window, black around it.
 void Present(SDL_GPUCommandBuffer* commands) {
     SDL_GPUTexture* swapchain = nullptr;
@@ -474,6 +503,7 @@ void Present(SDL_GPUCommandBuffer* commands) {
     blit.clear_color = {0, 0, 0, 1};
     blit.filter = SDL_GPU_FILTER_NEAREST;
     SDL_BlitGPUTexture(commands, &blit);
+    RenderDebugPanel(commands, swapchain);
 }
 
 SDL_GPUTransferBuffer* StartDownload(SDL_GPUCommandBuffer* commands) {
@@ -566,6 +596,7 @@ void StopRenderer() {
     SDL_WaitForGPUIdle(Device);
     FlatNormals = {};
     ReleaseTextures();
+    ReleaseGpuObjects();
     for (Target* target : {&ScreenTarget, &AlbedoTarget, &NormalTarget, &SceneTarget, &BloomA, &BloomB})
         Release(*target);
     for (SDL_GPUGraphicsPipeline* pipeline : Pipeline.All())
@@ -590,6 +621,17 @@ void StopRenderer() {
 
 SDL_GPUDevice* GpuDevice() { return Device; }
 
+SDL_GPUSampler* SamplerFor(Filter filter) { return filter == Filter::Linear ? LinearSampler : NearestSampler; }
+
+void DrawSprites2D(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, bool hdr) {
+    if (hdr)
+        DrawBatches(commands, pass, Pipeline.Scene,
+                    {Layer::Background, Layer::World, Layer::Glow, Layer::Overlay, Layer::Hud}, Pipeline.Glow);
+    else
+        DrawBatches(commands, pass, Pipeline.Hud,
+                    {Layer::Background, Layer::World, Layer::Glow, Layer::Overlay, Layer::Hud}, Pipeline.HudGlow);
+}
+
 void SetRendererVSync(bool vsync) {
     if (Device) ApplyVSync(vsync);
 }
@@ -611,7 +653,10 @@ void EndFrame2D() {
     SDL_GPUTransferBuffer* download = nullptr;
     if (PrepareTargets()) {
         Upload(commands);
-        DrawScene(commands);
+        if (ActiveRenderer())
+            DrawCustom(commands);
+        else
+            DrawScene(commands);
         if (!ScreenshotPath.empty()) download = StartDownload(commands);
         Present(commands);
     }
