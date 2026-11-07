@@ -91,6 +91,14 @@ template <Detail::ActionId A> Vec2 Axis(A left, A right, A up, A down) {
 void Force(int action, bool down);
 template <Detail::ActionId A> void Force(A action, bool down) { Force(int(action), down); }
 
+// Takes the pointer away from the mouse, for bots, demos and tests: from now on Mouse() is `position` and
+// the real mouse is ignored, until ReleaseMouse. The buttons are pressed with ForceMouseButton (the UI
+// sees both, so a bot can click it).
+void ForceMouse(Vec2 position);
+void ForceMouseButton(MouseButton button, bool down);
+void ReleaseMouse();
+bool MouseForced();
+
 // ---------------------------------------------------------------- raw devices
 
 bool KeyDown(Key key);

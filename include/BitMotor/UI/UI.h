@@ -51,8 +51,22 @@ struct Theme {
     float ImageBorder = 4;
     // Space between a widget's edge and its text.
     float Padding = 4;
-    // Tooltips wrap at this width.
+    // Tooltips wrap at this width, a little away from the cursor, with their own border and line spacing
+    // (0: the font's).
     float TooltipWidth = 160;
+    Color TooltipBorder = Color::Hex(0x5A6478);
+    Vec2 TooltipOffset = {8, 12};
+    float TooltipLineHeight = 0;
+
+    // Widgets with a colour of their own (the Panel, Button and FlatButton that take a `tint`): the tint
+    // colours their frame (the nine-slice image too) and their label; pointed at, both turn TextHover.
+    // Disabled, the frame is Faint and the label TextDisabled.
+    Color TextHover = Colors::White;
+    Color Faint = Color::Hex(0x2A303C);
+    // A tinted panel's title: on a tab filled with the tint, in TitleBack (TitleTab), or cut into the top
+    // border over a strip of TitleBack.
+    bool TitleTab = false;
+    Color TitleBack = Color::Hex(0x05070A);
 };
 
 void SetTheme(const Theme& theme);
@@ -70,11 +84,17 @@ bool Toggle(BitMotor::Rect area, std::string_view label, bool& value, bool enabl
 // within [min, max]. True on every frame it changes.
 bool Slider(BitMotor::Rect area, std::string_view label, float& value, float min = 0, float max = 1, float step = 0.05f,
             bool enabled = true);
+// The same in a colour of their own (see Theme: the tint colours the frame and the label).
+void Panel(BitMotor::Rect area, std::string_view title, Color tint);
+bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enabled = true);
+// A flat button for lists and choices: an outline in the tint, filled faintly while pointed at.
+bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool enabled = true);
 // A filled bar (health, loading): `fraction` 0..1 of it in `color`.
 void Bar(BitMotor::Rect area, float fraction, Color color);
 void Bar(BitMotor::Rect area, float fraction, Color color, Color back);
 // The same in blocks of `segment` pixels with a 1-pixel gap, like an LED meter.
 void Segments(BitMotor::Rect area, float fraction, Color color, float segment = 3);
+void Segments(BitMotor::Rect area, float fraction, Color color, Color back, float segment = 3);
 // A region stretched over the area (icons, portraits).
 void Image(BitMotor::Rect area, const Region& image, Color tint = Colors::White);
 // Text shown next to the cursor (or the focused widget) while the widget drawn just before is pointed at.
@@ -89,6 +109,9 @@ template <Input::Detail::ActionId A> float Prompt(Vec2 position, A action, std::
 // A window over everything: between BeginModal and EndModal are the only widgets that react (from the next
 // frame on), the rest of the screen is shaded behind it, and the focus moves into it.
 void BeginModal(BitMotor::Rect area, std::string_view title = {});
+// The same for a window the game draws itself: nothing is drawn, only the input is kept for the widgets
+// until EndModal.
+void BeginModal();
 void EndModal();
 
 // ---------------------------------------------------------------- your own widgets
@@ -97,6 +120,8 @@ void EndModal();
 bool Hovered(BitMotor::Rect area);
 // The area was clicked this frame; takes the click, so widgets under it do not get it.
 bool Clicked(BitMotor::Rect area);
+// The same with the right button.
+bool RightClicked(BitMotor::Rect area);
 // Called whenever a widget is pressed or changed (for an interface sound).
 void OnClick(std::function<void()> callback);
 

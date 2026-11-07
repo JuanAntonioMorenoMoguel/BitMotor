@@ -383,12 +383,12 @@ void HandleInputEvent(const SDL_Event& event) {
         if (!event.key.repeat) InputKey(FromScancode(event.key.scancode), event.type == SDL_EVENT_KEY_DOWN);
         break;
     case SDL_EVENT_MOUSE_MOTION:
-        InputMouseMove(MouseToLogical(event.motion.x, event.motion.y));
+        if (!Input::MouseForced()) InputMouseMove(MouseToLogical(event.motion.x, event.motion.y));
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
         MouseButton button = MouseButton::Left;
-        if (FromMouseButton(event.button.button, button))
+        if (!Input::MouseForced() && FromMouseButton(event.button.button, button))
             InputMouseButton(button, event.type == SDL_EVENT_MOUSE_BUTTON_DOWN);
         break;
     }

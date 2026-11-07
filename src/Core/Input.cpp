@@ -64,6 +64,7 @@ struct State {
     float FramePendingWheel = 0, FrameWheel = 0;
     std::array<bool, std::size_t(Button::Count)> AnalogFrame{}, AnalogPreviousFrame{};
     bool UsingGamepad = false, HasGamepad = false;
+    bool MouseForced = false; // Input::ForceMouse: the real mouse is ignored
     std::vector<ActionData> Actions;
 
     int RebindAction = -1;
@@ -376,6 +377,19 @@ Vec2 Axis(int left, int right, int up, int down) {
 void Force(int action, bool down) {
     if (ActionData* data = Find(action)) data->Forced = down;
 }
+
+void ForceMouse(Vec2 position) {
+    Now.MouseForced = true;
+    BitMotor::Detail::InputMouseMove(position);
+}
+
+void ForceMouseButton(MouseButton button, bool down) {
+    if (button >= MouseButton::Count) return;
+    Now.Mouse[std::size_t(button)].Set(down);
+}
+
+void ReleaseMouse() { Now.MouseForced = false; }
+bool MouseForced() { return Now.MouseForced; }
 
 bool KeyDown(Key key) { return key < Key::Count && Now.Keys[std::size_t(key)].TickDown; }
 bool KeyPressed(Key key) { return key < Key::Count && Now.Keys[std::size_t(key)].Pressed(); }

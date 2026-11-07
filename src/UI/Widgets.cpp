@@ -51,6 +51,7 @@ struct UiState {
     // This frame's input.
     Vec2 Mouse;
     bool MouseMoved = false, Click = false, MouseDown = false, ClickTaken = false;
+    bool RightClick = false, RightClickTaken = false;
     std::array<bool, NavCount> Fired{};
     std::array<float, NavCount> Held{}, Repeat{};
     bool Blocked = false;
@@ -92,7 +93,7 @@ float CapHeight(const TextStyle& style) { return Text::Measure("H", style).Y; }
 void Label(Rect area, std::string_view text, Color color, Align align) {
     TextStyle style = Style(color);
     style.Align = align;
-    float y = area.Y + std::floor((area.Height - CapHeight(style)) * 0.5f);
+    float y = std::floor(area.Y + area.Height * 0.5f - std::floor((CapHeight(style) - 1) * 0.5f));
     float x = align == Align::Left    ? area.X + Ui.Look.Padding
               : align == Align::Right ? area.Right() - Ui.Look.Padding
                                       : area.X + std::floor(area.Width * 0.5f);
@@ -146,6 +147,11 @@ int Register(bool adjustable, bool& focused) {
     scope.Adjustable.push_back(adjustable);
     focused = Live() && index == scope.Focus;
     return index;
+}
+
+// A disabled widget still takes the click, so it does not fall through to what is under it.
+void Swallow(BitMotor::Rect area) {
+    if (Ui.Click && !Ui.ClickTaken && Live() && area.Contains(Ui.Mouse)) Ui.ClickTaken = true;
 }
 
 // The mouse moving onto a widget gives it the focus.
@@ -207,6 +213,8 @@ void BeginUi() {
     Ui.Click = !Ui.Blocked && FramePressed(MouseButton::Left);
     Ui.MouseDown = FrameDown(MouseButton::Left);
     Ui.ClickTaken = false;
+    Ui.RightClick = !Ui.Blocked && FramePressed(MouseButton::Right);
+    Ui.RightClickTaken = false;
     UpdateNavigation(Time::RealDelta());
 
     // The focus moves among last frame's widgets of the scope that has the input.
@@ -251,13 +259,14 @@ void EndUi() {
     if (Ui.Tip.empty()) return;
     const UI::Theme& look = Ui.Look;
     TextStyle style = Style(look.Text.Color);
+    if (look.TooltipLineHeight > 0) style.LineHeight = look.TooltipLineHeight;
     Vec2 size = Text::Measure(Ui.Tip, style, look.TooltipWidth);
-    Rect box(Ui.TipAt + (Ui.TipBelow ? Vec2(0, 2) : Vec2(8, 12)), size + Vec2(look.Padding * 2, look.Padding * 2));
+    Rect box(Ui.TipAt + (Ui.TipBelow ? Vec2(0, 2) : look.TooltipOffset), size + Vec2(look.Padding * 2, look.Padding * 2));
     box.X = Clamp(box.X, 0.0f, Max(0.0f, Screen::Width() - box.Width));
     box.Y = Clamp(box.Y, 0.0f, Max(0.0f, Screen::Height() - box.Height));
     if (!Ui.TipBelow && box.Contains(Ui.Mouse)) box.Y = Max(0.0f, Ui.TipAt.Y - box.Height - 4); // not under the cursor
     UI::Rect(box, look.Tooltip);
-    UI::RectOutline(box, look.Border);
+    UI::RectOutline(box, look.TooltipBorder);
     Text::Paragraph(Ui.Tip, box.Position() + Vec2(look.Padding, look.Padding), look.TooltipWidth, style);
 }
 
@@ -275,6 +284,12 @@ bool Hovered(BitMotor::Rect area) { return Live() && area.Contains(Ui.Mouse); }
 bool Clicked(BitMotor::Rect area) {
     if (!Ui.Click || Ui.ClickTaken || !Hovered(area)) return false;
     Ui.ClickTaken = true;
+    return true;
+}
+
+bool RightClicked(BitMotor::Rect area) {
+    if (!Ui.RightClick || Ui.RightClickTaken || !Hovered(area)) return false;
+    Ui.RightClickTaken = true;
     return true;
 }
 
@@ -302,6 +317,8 @@ bool Button(BitMotor::Rect area, std::string_view label, bool enabled) {
         Hover(index, hovered);
         if (hovered) focused = Live() && index == Current().Focus;
         pressed = Clicked(area) || (focused && Ui.Confirm);
+    } else {
+        Swallow(area);
     }
     bool lit = hovered || (focused && Ui.ShowFocus);
     Color fill = !enabled                  ? look.Button.WithAlpha(look.Button.A * 0.5f)
@@ -310,6 +327,78 @@ bool Button(BitMotor::Rect area, std::string_view label, bool enabled) {
                                            : look.Button;
     Box(area, look.ButtonImage, fill, focused && Ui.ShowFocus ? look.Accent : look.Border);
     Label(area, label, enabled ? look.Text.Color : look.TextDisabled, Align::Center);
+    Remember(area, hovered, focused);
+    if (pressed) Fire();
+    return pressed;
+}
+
+void Panel(BitMotor::Rect area, std::string_view title, Color tint) {
+    const Theme& look = Ui.Look;
+    if (look.PanelImage) {
+        NineSlice(area, look.PanelImage, look.ImageBorder, tint);
+    } else {
+        UI::Rect(area, look.Panel);
+        UI::RectOutline(area, tint);
+    }
+    if (!title.empty()) {
+        const float width = Text::Measure(title, Style(tint)).X;
+        if (look.TitleTab) {
+            UI::Rect({area.X + 5, area.Y - 3, width + 8, 9}, tint);
+            UI::Rect({area.X + 5 + width + 8, area.Y - 3, 1, 9}, tint.WithAlpha(tint.A * 0.5f));
+            Text::Draw(title, {area.X + 9, area.Y - 2}, Style(look.TitleBack));
+        } else {
+            UI::Rect({area.X + 6, area.Y - 1, width + 6, 3}, look.TitleBack);
+            Text::Draw(title, {area.X + 9, area.Y - 2}, Style(tint));
+        }
+    }
+    Remember(area, Hovered(area), false);
+}
+
+namespace {
+
+// The pressing part of a tinted widget. Returns whether it is lit (pointed at or focused).
+bool Press(BitMotor::Rect area, bool enabled, bool& pressed, bool& hovered, bool& focused) {
+    pressed = hovered = focused = false;
+    if (!enabled) {
+        Swallow(area);
+        return false;
+    }
+    int index = Register(false, focused);
+    hovered = Hovered(area);
+    Hover(index, hovered);
+    if (hovered) focused = Live() && index == Current().Focus;
+    pressed = Clicked(area) || (focused && Ui.Confirm);
+    return hovered || (focused && Ui.ShowFocus);
+}
+
+void TintedLabel(BitMotor::Rect area, std::string_view label, Color color) { Label(area, label, color, Align::Center); }
+
+} // namespace
+
+bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enabled) {
+    const Theme& look = Ui.Look;
+    bool pressed, hovered, focused;
+    const bool lit = Press(area, enabled, pressed, hovered, focused);
+    const Color frame = !enabled ? look.Faint : lit ? look.TextHover : tint;
+    if (look.ButtonImage) NineSlice(area, look.ButtonImage, look.ImageBorder, frame);
+    else {
+        UI::Rect(area, look.Button);
+        UI::RectOutline(area, frame);
+    }
+    if (lit) UI::Rect(area.Expand(-2), tint.WithAlpha(tint.A * 0.18f));
+    TintedLabel(area, label, !enabled ? look.TextDisabled : lit ? look.TextHover : tint);
+    Remember(area, hovered, focused);
+    if (pressed) Fire();
+    return pressed;
+}
+
+bool FlatButton(BitMotor::Rect area, std::string_view label, Color tint, bool enabled) {
+    const Theme& look = Ui.Look;
+    bool pressed, hovered, focused;
+    const bool lit = Press(area, enabled, pressed, hovered, focused);
+    if (lit) UI::Rect(area, tint.WithAlpha(tint.A * 0.25f));
+    UI::RectOutline(area, !enabled ? look.Faint : lit ? look.TextHover : tint.WithAlpha(tint.A * 0.7f));
+    TintedLabel(area, label, !enabled ? look.TextDisabled : lit ? look.TextHover : tint);
     Remember(area, hovered, focused);
     if (pressed) Fire();
     return pressed;
@@ -391,17 +480,22 @@ void Bar(BitMotor::Rect area, float fraction, Color color) { Bar(area, fraction,
 
 void Bar(BitMotor::Rect area, float fraction, Color color, Color back) {
     UI::Rect(area, back);
-    float filled = std::round(area.Width * Clamp(fraction, 0.0f, 1.0f));
+    const float t = Clamp(fraction, 0.0f, 1.0f);
+    float filled = t > 0 ? Max(1.0f, std::round(area.Width * t)) : 0.0f; // a sliver shows it is not empty
     UI::Rect({area.X, area.Y, filled, area.Height}, color);
     Remember(area, Hovered(area), false);
 }
 
 void Segments(BitMotor::Rect area, float fraction, Color color, float segment) {
+    Segments(area, fraction, color, Ui.Look.BarBack, segment);
+}
+
+void Segments(BitMotor::Rect area, float fraction, Color color, Color back, float segment) {
     segment = Max(segment, 1.0f);
     int count = Max(1, int((area.Width + 1) / (segment + 1)));
     int lit = int(std::round(Clamp(fraction, 0.0f, 1.0f) * float(count)));
     for (int i = 0; i < count; ++i)
-        UI::Rect({area.X + float(i) * (segment + 1), area.Y, segment, area.Height}, i < lit ? color : Ui.Look.BarBack);
+        UI::Rect({area.X + float(i) * (segment + 1), area.Y, segment, area.Height}, i < lit ? color : back);
     Remember(area, Hovered(area), false);
 }
 
@@ -452,6 +546,12 @@ void BeginModal(BitMotor::Rect area, std::string_view title) {
     Ui.InModal = true;
     Ui.ModalNow = true;
     Panel(area, title);
+}
+
+void BeginModal() {
+    if (Ui.InModal) EndModal();
+    Ui.InModal = true;
+    Ui.ModalNow = true;
 }
 
 void EndModal() { Ui.InModal = false; }
