@@ -6,7 +6,8 @@ struct SDL_Window;
 namespace BitMotor::Detail {
 
 // The loop gives the window to Window and Screen after creating it (nullptr when it closes).
-void AttachDisplay(SDL_Window* window, int logicalWidth, int logicalHeight, bool vsync, bool integerScaling);
+void AttachDisplay(SDL_Window* window, int logicalWidth, int logicalHeight, bool vsync, bool integerScaling,
+                   bool nativeResolution = false);
 void SetFocused(bool focused);
 SDL_Window* CurrentWindow();
 

@@ -275,9 +275,10 @@ void Release(Target& target) {
     target = {};
 }
 
-// The targets follow Screen::Size (the window's size when there is no logical resolution).
+// The targets follow Screen::Size (the window's size when there is no logical resolution); with a
+// CustomRenderer, the screen follows Screen::PixelSize.
 bool PrepareTargets() {
-    Vec2 size = Screen::Size();
+    Vec2 size = ActiveRenderer() ? Screen::PixelSize() : Screen::Size();
     Uint32 width = Uint32(std::lround(size.X)), height = Uint32(std::lround(size.Y));
     if (width == 0 || height == 0) return false; // minimised
     Uint32 halfWidth = std::max<Uint32>(1, width / 2), halfHeight = std::max<Uint32>(1, height / 2);
@@ -336,8 +337,9 @@ void DrawBatches(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, SDL_GP
             count = 2;
         }
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, count);
-        SpriteUniforms uniforms{float(ScreenWidth),
-                                float(ScreenHeight),
+        const Vec2 logical = Screen::Size(); // sprites are placed in logical pixels, whatever the target's size
+        SpriteUniforms uniforms{logical.X,
+                                logical.Y,
                                 float(batch.First),
                                 0,
                                 float(batch.Source.Width()),

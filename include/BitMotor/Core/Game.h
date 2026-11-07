@@ -30,6 +30,10 @@ struct Config {
     // With Width/Height: grow the image only by whole steps (x2, x3...) so every pixel keeps the same
     // size (pixel art). false: as big as fits, even if some pixels end up wider than others.
     bool IntegerScaling = true;
+    // With a CustomRenderer: Frame::Screen and the targets that follow the screen are as big as the logical
+    // screen is in the window (Screen::PixelSize), not Width x Height, so shapes drawn by shaders stay sharp
+    // at any window size. Positions stay logical. BitMotor's 2D renderer always draws at Width x Height.
+    bool NativeResolution = false;
     bool Fullscreen = false;
     bool VSync = true;
     // Game::Update calls per second, with a fixed Time::Delta (deterministic: same input, same result).

@@ -213,7 +213,7 @@ bool PrepareTarget(TargetData& target) {
     if (!device) return false;
     int width = target.FixedWidth, height = target.FixedHeight;
     if (target.Scale > 0) {
-        const Vec2 screen = Screen::Size();
+        const Vec2 screen = Screen::PixelSize();
         width = std::max(1, int(std::lround(screen.X * target.Scale)));
         height = std::max(1, int(std::lround(screen.Y * target.Scale)));
     }
@@ -542,14 +542,14 @@ Target Target::Create(TargetFormat format, float scale, Filter filter) {
 int Target::Width() const {
     if (!Data) return 0;
     if (Data->Width > 0) return Data->Width;
-    if (Data->Scale > 0) return std::max(1, int(std::lround(Screen::Size().X * Data->Scale)));
+    if (Data->Scale > 0) return std::max(1, int(std::lround(Screen::PixelSize().X * Data->Scale)));
     return Data->FixedWidth;
 }
 
 int Target::Height() const {
     if (!Data) return 0;
     if (Data->Height > 0) return Data->Height;
-    if (Data->Scale > 0) return std::max(1, int(std::lround(Screen::Size().Y * Data->Scale)));
+    if (Data->Scale > 0) return std::max(1, int(std::lround(Screen::PixelSize().Y * Data->Scale)));
     return Data->FixedHeight;
 }
 
