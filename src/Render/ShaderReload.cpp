@@ -38,11 +38,12 @@ fs::path Normal(const fs::path& path) {
 // glslc or glslangValidator, from the Vulkan SDK or the PATH. Empty if there is neither.
 fs::path FindCompiler(bool& glslc) {
     std::vector<fs::path> folders;
-    if (const char* sdk = std::getenv("VULKAN_SDK")) {
+    // SDL_getenv and not std::getenv, which MSVC flags as unsafe (C4996).
+    if (const char* sdk = SDL_getenv("VULKAN_SDK")) {
         folders.push_back(fs::path(sdk) / "bin");
         folders.push_back(fs::path(sdk) / "Bin");
     }
-    if (const char* path = std::getenv("PATH")) {
+    if (const char* path = SDL_getenv("PATH")) {
 #ifdef _WIN32
         constexpr char separator = ';';
         const char* suffix = ".exe";

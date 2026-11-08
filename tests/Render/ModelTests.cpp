@@ -104,7 +104,8 @@ TEST(ModelParsesABitmodel) {
     CHECK_NEAR(quad.Geometry.Vertices()[0].Tint.G, 0.0f, 1e-6f);
     CHECK_NEAR(quad.Look.Tint.R, 1.0f, 1e-6f); // no material: white
     CHECK_EQ(model.Animations().size(), std::size_t(2));
-    CHECK_EQ(model.Nodes()[1], std::string("lid"));
+    const std::vector<std::string> nodes = model.Nodes(); // a copy: CHECK_EQ keeps a reference to its argument
+    CHECK_EQ(nodes[1], std::string("lid"));
 
     const std::vector<Mat4> rest = model.Pose();
     CheckVec(PositionOf(rest[1]), {2, 1, 0}); // child of root, moved up by it
