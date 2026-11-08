@@ -105,7 +105,7 @@ int Run(const Config& config, Game& game, void (*setup)()) {
         return 1;
     }
     SetIcon(window, config.Icon);
-    AttachDisplay(window, config.Width, config.Height, vsync, config.IntegerScaling);
+    AttachDisplay(window, config.Width, config.Height, vsync, config.IntegerScaling, config.NativeResolution);
     if (!StartRenderer(window, vsync)) {
         AttachDisplay(nullptr, 0, 0, vsync, config.IntegerScaling);
         SDL_DestroyWindow(window);

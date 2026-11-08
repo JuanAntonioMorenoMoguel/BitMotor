@@ -55,7 +55,8 @@ public:
 // One frame on the GPU: a sequence of passes, each drawing into one or more targets.
 class Frame {
 public:
-    // The screen at its logical size (Config::Width/Height): what is shown, scaled into the window.
+    // The screen at its logical size (Config::Width/Height), or at Screen::PixelSize with
+    // Config::NativeResolution: what is shown, scaled into the window.
     Target& Screen();
 
     // Starts a pass into `target` (a clear colour clears it first; without one it keeps what it had).

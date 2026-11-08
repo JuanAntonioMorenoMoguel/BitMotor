@@ -6,6 +6,7 @@
 #include "BitMotor/Core/Data.h"
 #include "BitMotor/Core/Log.h"
 #include "Core/DisplayInternal.h"
+#include "Render/GpuInternal.h"
 #include "Render/RendererInternal.h"
 
 #include <SDL3/SDL.h>
@@ -21,13 +22,16 @@ SDL_Window* TheWindow = nullptr;
 Vec2 LogicalSize;
 bool VSyncOn = true;
 bool IntegerScaling = true;
+bool NativeResolution = false;
 bool HasFocus = true;
 } // namespace
 
 namespace Detail {
 
-void AttachDisplay(SDL_Window* window, int logicalWidth, int logicalHeight, bool vsync, bool integerScaling) {
+void AttachDisplay(SDL_Window* window, int logicalWidth, int logicalHeight, bool vsync, bool integerScaling,
+                   bool nativeResolution) {
     TheWindow = window;
+    NativeResolution = nativeResolution;
     IntegerScaling = integerScaling;
     LogicalSize = {float(std::max(logicalWidth, 0)), float(std::max(logicalHeight, 0))};
     VSyncOn = vsync;
@@ -118,6 +122,14 @@ void Screenshot(const std::filesystem::path& path) {
 }
 
 Rect Viewport() { return Detail::ViewportFor(Window::Size()); }
+
+Vec2 PixelSize() {
+    const Vec2 logical = Size();
+    if (!NativeResolution || !Detail::ActiveRenderer()) return logical;
+    const Rect view = Viewport();
+    if (view.Width < 1 || view.Height < 1) return logical; // no window, or minimised
+    return {std::round(view.Width), std::round(view.Height)};
+}
 
 void SetIntegerScaling(bool integer) { BitMotor::IntegerScaling = integer; }
 bool IntegerScaling() { return BitMotor::IntegerScaling; }

@@ -4,6 +4,7 @@
 #include "BitMotor/Core/Screen.h"
 #include "BitMotor/Render/CustomRenderer.h"
 #include "BitMotor/Render/Gpu.h"
+#include "Core/DisplayInternal.h"
 #include "Render/DebugPanelInternal.h"
 #include "Render/GpuInternal.h"
 
@@ -185,6 +186,19 @@ TEST(CustomRendererLivesWithTheGame) {
     CHECK(Detail::ActiveRenderer() == nullptr);
     Detail::ShutdownCustomRenderer(); // twice: nothing
     CHECK_EQ(renderer.Shutdowns, 1);
+}
+
+TEST(NativeResolutionNeedsAWindowAndACustomRenderer) {
+    struct Nothing : CustomRenderer {
+        void Render(Frame&) override {}
+    } renderer;
+    Detail::AttachDisplay(nullptr, 320, 180, true, true, true);
+    CHECK_EQ(Screen::PixelSize(), Vec2(320, 180)); // no renderer yet: the logical size
+    Detail::UseCustomRenderer(&renderer);
+    CHECK_EQ(Screen::PixelSize(), Vec2(320, 180)); // no window: the logical size
+    CHECK_EQ(Target::Create(TargetFormat::Rgba8, 0.5f).Width(), 160);
+    Detail::ShutdownCustomRenderer();
+    Detail::AttachDisplay(nullptr, 0, 0, true, true);
 }
 
 TEST(DebugPanelTogglesWithF1) {

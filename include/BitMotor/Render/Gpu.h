@@ -150,7 +150,7 @@ public:
     // A fixed size.
     static Target Create(int width, int height, TargetFormat format = TargetFormat::Rgba8,
                          Filter filter = Filter::Linear);
-    // `scale` times the screen's size (Screen::Size), and it follows it when the window changes.
+    // `scale` times the screen's size in pixels (Screen::PixelSize), and it follows it when the window changes.
     static Target Create(TargetFormat format = TargetFormat::Rgba8, float scale = 1, Filter filter = Filter::Linear);
 
     int Width() const;

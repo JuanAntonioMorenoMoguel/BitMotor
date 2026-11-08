@@ -23,10 +23,14 @@ Vec2 Center();
 // clears to black before each Draw.
 void Clear(Color color);
 
-// Saves this frame as a PNG (or BMP if the name ends in .bmp) when it finishes drawing, at the logical
-// resolution. Relative paths go to Files::SavePath; with no path, "Screenshots/<date>_<time>.png".
+// Saves this frame as a PNG (or BMP if the name ends in .bmp) when it finishes drawing, at its size in
+// pixels (Screen::PixelSize: the logical resolution unless Config::NativeResolution). Relative paths go to Files::SavePath; with no path, "Screenshots/<date>_<time>.png".
 // `--screenshot file.png` on the command line saves the last frame of a `--frames N` run.
 void Screenshot(const std::filesystem::path& path = {});
+
+// The size in pixels of the image the game draws: Size(), or with Config::NativeResolution (and a
+// CustomRenderer) the logical screen's size inside the window, Viewport().Size().
+Vec2 PixelSize();
 
 // Window pixels -> logical pixels, and back. Points on the black bars fall outside 0..Size().
 Vec2 ToLogical(Vec2 windowPixel);
