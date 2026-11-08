@@ -18,7 +18,13 @@ struct SDL_GPUDevice;
 // shader goes, so a shader declares them in these sets:
 //     vertex shader:    set 0 textures (samplers), then storage buffers · set 1 uniform blocks
 //     fragment shader:  set 2 textures (samplers), then storage buffers · set 3 uniform blocks
-// Uniform block 0 of both stages is BitMotor's globals (Gpu::Globals, below); the game's own start at 1.
+//     compute shader:   set 0 textures (samplers), then storage buffers it reads · set 1 targets it writes
+//                       (image2D), then storage buffers it writes · set 2 uniform blocks
+// Uniform block 0 of every stage is BitMotor's globals (Gpu::Globals, below); the game's own start at 1.
+//
+// In Debug builds a shader loaded from a .spv that BitMotor_Shaders made is watched: saving its source
+// (shaders/x.frag next to the game's sources) recompiles it with glslc or glslangValidator, and every
+// pipeline that uses it is remade before its next draw. A shader with errors logs them and keeps the old code.
 //
 //     Shader vertex = Shader::Load("shaders/shapes.vert.spv", ShaderStage::Vertex, {.Uniforms = 2, .StorageBuffers =
 //     1}); Shader fragment = Shader::Load("shaders/shapes.frag.spv", ShaderStage::Fragment, {.Uniforms = 1}); Pipeline
@@ -27,18 +33,23 @@ struct SDL_GPUDevice;
 //     big as the screen, always
 namespace BitMotor {
 
-enum class ShaderStage { Vertex, Fragment };
+enum class ShaderStage { Vertex, Fragment, Compute };
 
 // How many resources of each kind the shader declares (SDL_GPU needs to know).
 struct ShaderResources {
     int Uniforms = 0;
     int Samplers = 0;
-    int StorageBuffers = 0;
+    int StorageBuffers = 0; // read only
+    // Compute shaders only: what they write, and their local_size (threads per group).
+    int WriteTargets = 0;
+    int WriteBuffers = 0;
+    int ThreadsX = 64, ThreadsY = 1, ThreadsZ = 1;
 };
 
 namespace Detail {
 struct ShaderData;
 struct PipelineData;
+struct ComputePipelineData;
 struct BufferData;
 struct TargetData;
 struct TargetAccess;
@@ -111,6 +122,8 @@ private:
     std::shared_ptr<Detail::PipelineData> Data;
 };
 
+// Every buffer can also be read and written by compute shaders (Frame::BeginCompute), so a simulation can
+// fill the vertices or instances that a draw then uses.
 enum class BufferUsage {
     Vertex,  // Frame::BindVertices
     Index,   // Frame::BindIndices (32-bit indices)
@@ -143,7 +156,8 @@ private:
     std::shared_ptr<Detail::BufferData> Data;
 };
 
-// An image to draw into and then read from a shader (Frame::BindTexture).
+// An image to draw into and then read from a shader (Frame::BindTexture). Compute shaders can also write it
+// (Frame::BeginCompute), except Rgba8 targets with Config::LinearColor, which are sRGB.
 class Target {
 public:
     Target() = default;
@@ -168,6 +182,22 @@ public:
 private:
     friend struct Detail::TargetAccess;
     std::shared_ptr<Detail::TargetData> Data;
+};
+
+// A compute shader ready to run: Frame::BeginCompute, Bind, Dispatch.
+//     Shader step = Shader::Load("shaders/step.comp.spv", ShaderStage::Compute, {.Uniforms = 1, .WriteBuffers = 1});
+//     ComputePipeline simulate = ComputePipeline::Create(step);
+class ComputePipeline {
+public:
+    ComputePipeline() = default;
+    // Empty (and a log error) if the shader is not a compute shader or SDL_GPU refuses it.
+    static ComputePipeline Create(const Shader& compute);
+
+    explicit operator bool() const { return Data != nullptr; }
+    const std::shared_ptr<Detail::ComputePipelineData>& Internal() const { return Data; }
+
+private:
+    std::shared_ptr<Detail::ComputePipelineData> Data;
 };
 
 // Two targets that swap every frame: draw into Current reading Previous (trails, feedback, simulations).

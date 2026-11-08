@@ -17,8 +17,8 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 | Temblor de cámara | Dentro de `Camera2D` (`AddShake`, `Trauma`, `ShakeOffset`, `ShakeAngle`). Sin struct aparte |
 | Settings | Estándar y ampliable por herencia (`struct MySettings : Settings`) |
 | Texto en renderers propios | `Text::Layout` devuelve posiciones de glifos |
-| v1 | Solo 2D. El 3D se aplaza hasta que un juego lo necesite |
-| Platform/Store | Sí: backend local + Steam. Workshop, consolas y multijugador masivo, fuera |
+| 3D | 3D básico (`Model.h`): mallas, modelos `.bitmodel` de BitModel, cámara, sol y luces puntuales, debajo del 2D. Sin esqueletos ni sombras de momento |
+| Platform/Store | Sí, todo bajo `Platform::`: backend local ya hecho; Steam aparcado hasta que haya un juego publicado. Workshop, consolas y multijugador masivo, fuera |
 | Renderer propio | 3 niveles: Renderer2D, Renderer2D + pases de post-proceso, `CustomRenderer` sobre `Gpu` |
 
 ## Módulos y API
@@ -59,17 +59,23 @@ Formatos: WAV, FLAC, MP3, OGG y `.bitmusic` (canciones de BitMusic, sintetizadas
 `Font::Pixel`, `TextStyle { Font, Size, Color, Align, Shadow, Outline, LineHeight }`, `Draw, Paragraph, Rich, Typewriter, Measure, Wrap, Layout`, `Number(v, suffix), Percent, Clock`, `SetLanguage, Language, Tr` (`lang/<code>.json`).
 
 ### Platform
-`Name, PlayerName, PlayerId`, `Unlock, IsUnlocked, Achievements` (+ logros automáticos por umbral en `achievements.json`), `AddStat, SetStat, GetStat`, `SubmitScore, Leaderboard` (asíncrono; locales en la fase 6), `OwnsDlc`, `IsSteamDeck, ShowKeyboard`. Con internet (fase 16): marcadores online, `CloudSave, CloudLoad`, `SetPresence`, `CreateLobby, FindLobbies, JoinLobby, SetLobbyData, InviteFriends`. El SDK de Steamworks no va en el repositorio (`-DBITMOTOR_STEAM_SDK`).
+Hecho (local, `platform.json` en `Files::SavePath`): `Platform::Name, Save`, `Unlock, Unlocked, Progress, ProgressOf, UnlockedOn, Achievements, ResetAchievements` + evento `AchievementUnlocked`, `Stat, SetStat, AddStat, MaxStat`, `ConfigureBoard, Submit, Top, Best, ClearBoard` (`LeaderboardEntry`, `LeaderboardOptions`), `OwnsDlc, Dlcs` (carpetas `dlc/<id>`). Con Steam (aparcado): `PlayerName, PlayerId`, `IsSteamDeck, ShowKeyboard`. Con internet (fase 16): marcadores online, `CloudSave, CloudLoad`, `SetPresence`, `CreateLobby, FindLobbies, JoinLobby, SetLobbyData, InviteFriends`. El SDK de Steamworks no va en el repositorio (`-DBITMOTOR_STEAM_SDK`).
 
 ### Gpu y shaders
 - `CustomRenderer { Init, Resize, Render, Shutdown }` (es un servicio). El motor sigue gestionando swapchain, ImGui, capturas y redimensionado.
-- `Gpu::Native()`, `Shader::Load`, `Pipeline::Create`, `Buffer::Create`, `Buffer::Upload / Readback`, `Target::Create` (`PingPong`), `Gpu::SetGlobal`; compute en la fase 12.
+- `Gpu::Native()`, `Shader::Load`, `Pipeline::Create`, `Buffer::Create`, `Buffer::Upload / Readback`, `Target::Create` (`PingPong`), `Gpu::SetGlobal`.
+- Compute: `ShaderStage::Compute`, `ComputePipeline::Create`, `Frame::BeginCompute(buffers, targets)`, `Bind`, `Dispatch`, `End`. Todos los buffers y los targets (salvo sRGB) se pueden escribir desde compute.
+- Recarga en caliente (Debug): los shaders cargados de un `.spv` de `BitMotor_Shaders` se recompilan al guardar su fuente (o un `.glsl` de su carpeta) y sus pipelines se rehacen; si hay errores se registran y se mantiene el código anterior.
+- `Config::LinearColor`: mezcla y luz en espacio lineal (pantalla sRGB). Colores y texturas siguen en sRGB al escribirlos.
 - `Run<Juego, Renderer>(config)`. `Frame`: `Begin/End` de pases (hasta 4 targets), `Bind`, `BindTexture`, `BindStorage`, `BindVertices/Indices`, `Push` (bloques 1..3; el 0 es `Gpu::Globals`), `Draw`, `DrawIndexed`, `Fullscreen` y `Draw2D` (los sprites, texto y UI de BitMotor encima).
 - `CustomRenderer.h` y `Gpu.h` no están en `BitMotor.h`: nombres como `Frame`, `Target` o `Buffer` no chocan con los del juego.
 - Panel de depuración: Dear ImGui, F1 o `--debug`; `Game::DebugPanel()` y `Scene::DebugPanel()`.
 - `Frame { Begin, End, Bind, Push, Draw, DrawIndexed, Fullscreen, Dispatch, Swapchain, Draw2D }`.
 - `Material2D { Load, With }`, `Renderer2D::AddPostPass, RemovePostPass, SetPostParam`, `ShaderRenderer(fragment)`.
 - `#include <BitMotor.glsl>` con uniforms estándar, recarga en caliente, errores en magenta, panel automático de parámetros y `BitMotor_Shaders()` en CMake.
+
+### Obj 3D
+`Vertex3D`, `Material { Tint, Image, Emission, Unlit }`, `Mesh { Create, Cube, Sphere, Plane, Cylinder }`, `Model { Load, Parse, FromMesh, Animation, Animations, Nodes, Pose, Socket }` (formato en `docs/BitModel.md`), `ModelAnimation { Duration, Loops, Fired }`, `Model3D { Source, Position, Rotation, Scale, Tint, Animation, Time }`, `Camera3D { View, Projection, ViewProjection, ToScreen, Ray }`, `PointLight3D`, `Screen::SetCamera3D, Draw(Model3D), Draw(PointLight3D)`, `Lighting3D::SetSun, SetAmbient`. Matemáticas: `Quat { FromAxisAngle, FromEuler, LookRotation, Slerp }`, `Mat4::RotateX/Y, Rotate, Transform, Perspective, LookAt, TransformDirection`.
 
 ### Net
 `Host, Join, Leave, IsHost, LocalId, Peers, Send<T>, On<T>, Ping`, eventos `PeerJoined, PeerLeft, ConnectionLost`, serialización binaria con `BITMOTOR_FIELDS`, `Lockstep`. Después: `Snapshot<T>, Interpolated<T>, Rollback<State>`, servidor dedicado.
@@ -99,8 +105,9 @@ Formatos: WAV, FLAC, MP3, OGG y `.bitmusic` (canciones de BitMusic, sintetizadas
 Cada fase termina con tests internos y un ejemplo en `examples/`.
 
 ## Pendiente
-- Qué hacer con nyiengisprite (bloquea la fase 13).
-- Si MONOCHROME o RogueInvasion tienen jugadores con guardados (conversión puntual en el juego).
+- Integración con Steam (aparcada hasta que haya un juego publicado; falta el App ID).
+- Multijugador local (fase 11, aparcada).
+- BitSprite, BitMusic (la aplicación) y BitModel se hacen en sus propios proyectos y repositorios.
 
 ## Código existente (referencia)
 - `nyiengilib` y `nyiengisprite` en `C:\Users\juamo\Desktop\NYIENGI`.

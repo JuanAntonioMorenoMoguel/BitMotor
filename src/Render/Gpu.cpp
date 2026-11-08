@@ -23,6 +23,7 @@ namespace {
 
 // Every live object, so that they can let their native objects go when the GPU stops.
 std::vector<PipelineData*> Pipelines;
+std::vector<ComputePipelineData*> ComputePipelines;
 std::vector<BufferData*> Buffers;
 std::vector<TargetData*> Targets;
 
@@ -38,13 +39,16 @@ CustomRenderer* Renderer = nullptr;
 int LastWidth = 0, LastHeight = 0;
 
 SDL_GPUBufferUsageFlags NativeUsage(BufferUsage usage) {
+    // Compute shaders can read and write every buffer.
+    constexpr SDL_GPUBufferUsageFlags compute =
+        SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE;
     switch (usage) {
     case BufferUsage::Vertex:
-        return SDL_GPU_BUFFERUSAGE_VERTEX;
+        return SDL_GPU_BUFFERUSAGE_VERTEX | compute;
     case BufferUsage::Index:
-        return SDL_GPU_BUFFERUSAGE_INDEX;
+        return SDL_GPU_BUFFERUSAGE_INDEX | compute;
     default:
-        return SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ;
+        return SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ | compute;
     }
 }
 
@@ -69,6 +73,26 @@ void ReleaseNative(TargetData& target) {
     if (!target.External && target.Native && GpuDevice()) SDL_ReleaseGPUTexture(GpuDevice(), target.Native);
     target.Native = nullptr;
     if (!target.External) target.Width = target.Height = 0;
+}
+
+SDL_GPUComputePipeline* MakeCompute(const ShaderData& shader) {
+    const ShaderResources& r = shader.Resources;
+    SDL_GPUComputePipelineCreateInfo info{};
+    info.code = shader.Code.data();
+    info.code_size = shader.Code.size();
+    info.entrypoint = "main";
+    info.format = SDL_GPU_SHADERFORMAT_SPIRV;
+    info.num_samplers = Uint32(std::max(0, r.Samplers));
+    info.num_readonly_storage_buffers = Uint32(std::max(0, r.StorageBuffers));
+    info.num_readwrite_storage_textures = Uint32(std::max(0, r.WriteTargets));
+    info.num_readwrite_storage_buffers = Uint32(std::max(0, r.WriteBuffers));
+    info.num_uniform_buffers = Uint32(std::max(0, r.Uniforms));
+    info.threadcount_x = Uint32(std::max(1, r.ThreadsX));
+    info.threadcount_y = Uint32(std::max(1, r.ThreadsY));
+    info.threadcount_z = Uint32(std::max(1, r.ThreadsZ));
+    SDL_GPUComputePipeline* native = SDL_CreateGPUComputePipeline(GpuDevice(), &info);
+    if (!native) Log::Error("SDL_CreateGPUComputePipeline: {}", SDL_GetError());
+    return native;
 }
 
 SDL_GPUShader* MakeNative(const ShaderData& shader) {
@@ -187,7 +211,7 @@ SDL_GPUTextureFormat NativeFormat(TargetFormat format) {
     case TargetFormat::R32F:
         return SDL_GPU_TEXTUREFORMAT_R32_FLOAT;
     default:
-        return SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        return LinearColor() ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     }
 }
 
@@ -195,6 +219,11 @@ PipelineData::PipelineData() { Pipelines.push_back(this); }
 PipelineData::~PipelineData() {
     if (Native && GpuDevice()) SDL_ReleaseGPUGraphicsPipeline(GpuDevice(), Native);
     Forget(Pipelines, this);
+}
+ComputePipelineData::ComputePipelineData() { ComputePipelines.push_back(this); }
+ComputePipelineData::~ComputePipelineData() {
+    if (Native && GpuDevice()) SDL_ReleaseGPUComputePipeline(GpuDevice(), Native);
+    Forget(ComputePipelines, this);
 }
 BufferData::BufferData() { Buffers.push_back(this); }
 BufferData::~BufferData() {
@@ -224,6 +253,10 @@ bool PrepareTarget(TargetData& target) {
     info.type = SDL_GPU_TEXTURETYPE_2D;
     info.format = NativeFormat(target.Format);
     info.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    // Compute shaders can write it too, where the format allows (not sRGB).
+    const SDL_GPUTextureUsageFlags compute = SDL_GPU_TEXTUREUSAGE_COMPUTE_STORAGE_WRITE;
+    if (SDL_GPUTextureSupportsFormat(device, info.format, SDL_GPU_TEXTURETYPE_2D, info.usage | compute))
+        info.usage |= compute;
     info.width = Uint32(width);
     info.height = Uint32(height);
     info.layer_count_or_depth = 1;
@@ -300,11 +333,16 @@ void UpdateGlobals(double realDt) {
 void PushGlobals(SDL_GPUCommandBuffer* commands) {
     SDL_PushGPUVertexUniformData(commands, 0, &Current, sizeof(Current));
     SDL_PushGPUFragmentUniformData(commands, 0, &Current, sizeof(Current));
+    SDL_PushGPUComputeUniformData(commands, 0, &Current, sizeof(Current));
 }
 
 void ReleaseGpuObjects() {
     for (PipelineData* pipeline : Pipelines) {
         if (pipeline->Native && GpuDevice()) SDL_ReleaseGPUGraphicsPipeline(GpuDevice(), pipeline->Native);
+        pipeline->Native = nullptr;
+    }
+    for (ComputePipelineData* pipeline : ComputePipelines) {
+        if (pipeline->Native && GpuDevice()) SDL_ReleaseGPUComputePipeline(GpuDevice(), pipeline->Native);
         pipeline->Native = nullptr;
     }
     for (BufferData* buffer : Buffers) ReleaseNative(*buffer);
@@ -359,6 +397,9 @@ Shader Shader::Load(const std::filesystem::path& path, ShaderStage stage, Shader
     }
     Shader shader = FromMemory(*bytes, stage, resources);
     if (!shader) Log::Error("Shader {}: not SPIR-V (compile it with BitMotor_Shaders)", path.string());
+#ifndef NDEBUG
+    if (shader && !path.is_absolute()) Detail::WatchShaderSource(shader.Internal(), path);
+#endif
     return shader;
 }
 
@@ -391,6 +432,74 @@ ShaderStage Shader::Stage() const { return Data ? Data->Stage : ShaderStage::Ver
 
 // ---------------------------------------------------------------- Pipeline
 
+namespace Detail {
+namespace {
+
+SDL_GPUGraphicsPipeline* BuildNative(const PipelineInfo& info) {
+    SDL_GPUShader* vertex = MakeNative(*info.Vertex.Internal());
+    SDL_GPUShader* fragment = MakeNative(*info.Fragment.Internal());
+    SDL_GPUColorTargetDescription targets[4]{};
+    for (std::size_t i = 0; i < info.Targets.size(); ++i) {
+        targets[i].format = NativeFormat(info.Targets[i]);
+        targets[i].blend_state = BlendState(info.Blending);
+    }
+    std::vector<SDL_GPUVertexAttribute> attributes;
+    for (const VertexAttribute& a : info.Attributes)
+        attributes.push_back({Uint32(a.Location), 0, NativeAttribute(a.Type), Uint32(a.Offset)});
+    SDL_GPUVertexBufferDescription vertexBuffer{};
+    vertexBuffer.slot = 0;
+    vertexBuffer.pitch = Uint32(std::max(0, info.VertexStride));
+    vertexBuffer.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
+
+    SDL_GPUGraphicsPipelineCreateInfo create{};
+    create.vertex_shader = vertex;
+    create.fragment_shader = fragment;
+    create.primitive_type = NativeTopology(info.Topology);
+    create.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
+    create.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    create.target_info.color_target_descriptions = targets;
+    create.target_info.num_color_targets = Uint32(info.Targets.size());
+    if (!attributes.empty()) {
+        create.vertex_input_state.vertex_buffer_descriptions = &vertexBuffer;
+        create.vertex_input_state.num_vertex_buffers = 1;
+        create.vertex_input_state.vertex_attributes = attributes.data();
+        create.vertex_input_state.num_vertex_attributes = Uint32(attributes.size());
+    }
+    SDL_GPUGraphicsPipeline* native =
+        vertex && fragment ? SDL_CreateGPUGraphicsPipeline(GpuDevice(), &create) : nullptr;
+    if (vertex) SDL_ReleaseGPUShader(GpuDevice(), vertex);
+    if (fragment) SDL_ReleaseGPUShader(GpuDevice(), fragment);
+    if (!native) Log::Error("SDL_CreateGPUGraphicsPipeline: {}", SDL_GetError());
+    return native;
+}
+
+} // namespace
+
+void RefreshPipeline(PipelineData& pipeline) {
+    const int vertex = pipeline.Info.Vertex.Internal()->Version, fragment = pipeline.Info.Fragment.Internal()->Version;
+    if (vertex == pipeline.VertexVersion && fragment == pipeline.FragmentVersion) return;
+    pipeline.VertexVersion = vertex;
+    pipeline.FragmentVersion = fragment;
+    if (SDL_GPUGraphicsPipeline* native = BuildNative(pipeline.Info)) {
+        if (pipeline.Native) SDL_ReleaseGPUGraphicsPipeline(GpuDevice(), pipeline.Native);
+        pipeline.Native = native;
+        Log::Info("Pipeline remade with the reloaded shader");
+    }
+}
+
+void RefreshPipeline(ComputePipelineData& pipeline) {
+    const int version = pipeline.Source.Internal()->Version;
+    if (version == pipeline.Version) return;
+    pipeline.Version = version;
+    if (SDL_GPUComputePipeline* native = MakeCompute(*pipeline.Source.Internal())) {
+        if (pipeline.Native) SDL_ReleaseGPUComputePipeline(GpuDevice(), pipeline.Native);
+        pipeline.Native = native;
+        Log::Info("Compute pipeline remade with the reloaded shader");
+    }
+}
+
+} // namespace Detail
+
 Pipeline Pipeline::Create(const PipelineInfo& info) {
     if (!info.Vertex || !info.Fragment || info.Vertex.Stage() != ShaderStage::Vertex ||
         info.Fragment.Stage() != ShaderStage::Fragment) {
@@ -405,48 +514,36 @@ Pipeline Pipeline::Create(const PipelineInfo& info) {
         Log::Error("Pipeline::Create: there is no GPU yet (create pipelines in CustomRenderer::Init)");
         return {};
     }
-    SDL_GPUShader* vertex = Detail::MakeNative(*info.Vertex.Internal());
-    SDL_GPUShader* fragment = Detail::MakeNative(*info.Fragment.Internal());
-    SDL_GPUColorTargetDescription targets[4]{};
-    for (std::size_t i = 0; i < info.Targets.size(); ++i) {
-        targets[i].format = Detail::NativeFormat(info.Targets[i]);
-        targets[i].blend_state = Detail::BlendState(info.Blending);
-    }
-    std::vector<SDL_GPUVertexAttribute> attributes;
-    for (const VertexAttribute& a : info.Attributes)
-        attributes.push_back({Uint32(a.Location), 0, Detail::NativeAttribute(a.Type), Uint32(a.Offset)});
-    SDL_GPUVertexBufferDescription vertexBuffer{};
-    vertexBuffer.slot = 0;
-    vertexBuffer.pitch = Uint32(std::max(0, info.VertexStride));
-    vertexBuffer.input_rate = SDL_GPU_VERTEXINPUTRATE_VERTEX;
-
-    SDL_GPUGraphicsPipelineCreateInfo create{};
-    create.vertex_shader = vertex;
-    create.fragment_shader = fragment;
-    create.primitive_type = Detail::NativeTopology(info.Topology);
-    create.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
-    create.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
-    create.target_info.color_target_descriptions = targets;
-    create.target_info.num_color_targets = Uint32(info.Targets.size());
-    if (!attributes.empty()) {
-        create.vertex_input_state.vertex_buffer_descriptions = &vertexBuffer;
-        create.vertex_input_state.num_vertex_buffers = 1;
-        create.vertex_input_state.vertex_attributes = attributes.data();
-        create.vertex_input_state.num_vertex_attributes = Uint32(attributes.size());
-    }
-    SDL_GPUGraphicsPipeline* native =
-        vertex && fragment ? SDL_CreateGPUGraphicsPipeline(Detail::GpuDevice(), &create) : nullptr;
-    if (vertex) SDL_ReleaseGPUShader(Detail::GpuDevice(), vertex);
-    if (fragment) SDL_ReleaseGPUShader(Detail::GpuDevice(), fragment);
-    if (!native) {
-        Log::Error("SDL_CreateGPUGraphicsPipeline: {}", SDL_GetError());
-        return {};
-    }
+    SDL_GPUGraphicsPipeline* native = Detail::BuildNative(info);
+    if (!native) return {};
     Pipeline pipeline;
     pipeline.Data = std::make_shared<Detail::PipelineData>();
     pipeline.Data->Native = native;
-    pipeline.Data->Targets = info.Targets;
-    pipeline.Data->UsesVertices = !attributes.empty();
+    pipeline.Data->Info = info;
+    pipeline.Data->VertexVersion = info.Vertex.Internal()->Version;
+    pipeline.Data->FragmentVersion = info.Fragment.Internal()->Version;
+    pipeline.Data->UsesVertices = !info.Attributes.empty();
+    return pipeline;
+}
+
+// ---------------------------------------------------------------- ComputePipeline
+
+ComputePipeline ComputePipeline::Create(const Shader& compute) {
+    if (!compute || compute.Stage() != ShaderStage::Compute) {
+        Log::Error("ComputePipeline::Create needs a compute shader");
+        return {};
+    }
+    if (!Detail::GpuDevice()) {
+        Log::Error("ComputePipeline::Create: there is no GPU yet (create pipelines in CustomRenderer::Init)");
+        return {};
+    }
+    SDL_GPUComputePipeline* native = Detail::MakeCompute(*compute.Internal());
+    if (!native) return {};
+    ComputePipeline pipeline;
+    pipeline.Data = std::make_shared<Detail::ComputePipelineData>();
+    pipeline.Data->Native = native;
+    pipeline.Data->Source = compute;
+    pipeline.Data->Version = compute.Internal()->Version;
     return pipeline;
 }
 
@@ -641,7 +738,7 @@ const Globals& CurrentGlobals() { return Detail::Current; }
 // ---------------------------------------------------------------- Frame
 
 Frame::~Frame() {
-    if (Pass) {
+    if (Pass || Compute) {
         Log::Warn("Frame: a pass was not ended (Frame::End)");
         End();
     }
@@ -652,7 +749,7 @@ Target& Frame::Screen() { return *ScreenTarget; }
 void Frame::Begin(Target& target, std::optional<Color> clear) { Begin({&target}, clear); }
 
 void Frame::Begin(std::initializer_list<Target*> targets, std::optional<Color> clear) {
-    if (Pass) {
+    if (Pass || Compute) {
         Log::Warn("Frame::Begin: the previous pass was not ended");
         End();
     }
@@ -672,7 +769,10 @@ void Frame::Begin(std::initializer_list<Target*> targets, std::optional<Color> c
         info.texture = target->Internal()->Native;
         info.load_op = clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
         info.store_op = SDL_GPU_STOREOP_STORE;
-        if (clear) info.clear_color = {clear->R, clear->G, clear->B, clear->A};
+        if (clear) {
+            const Color c = Detail::ToLinear(*clear);
+            info.clear_color = {c.R, c.G, c.B, c.A};
+        }
     }
     Pass = SDL_BeginGPURenderPass(Commands, infos, count, nullptr);
     if (!Pass) {
@@ -684,6 +784,11 @@ void Frame::Begin(std::initializer_list<Target*> targets, std::optional<Color> c
 }
 
 void Frame::End() {
+    if (Compute) {
+        SDL_EndGPUComputePass(Compute);
+        Compute = nullptr;
+        BoundCompute = nullptr;
+    }
     if (!Pass) return;
     SDL_EndGPURenderPass(Pass);
     Pass = nullptr;
@@ -691,36 +796,93 @@ void Frame::End() {
     Bound = nullptr;
 }
 
+void Frame::BeginCompute(std::initializer_list<const Buffer*> buffers, std::initializer_list<Target*> targets) {
+    if (Pass || Compute) {
+        Log::Warn("Frame::BeginCompute: the previous pass was not ended");
+        End();
+    }
+    if (buffers.size() > 8 || targets.size() > 8) {
+        Log::Error("Frame::BeginCompute: up to 8 buffers and 8 targets");
+        return;
+    }
+    Detail::FlushUploads(Commands);
+    SDL_GPUStorageTextureReadWriteBinding textures[8]{};
+    SDL_GPUStorageBufferReadWriteBinding natives[8]{};
+    Uint32 textureCount = 0, bufferCount = 0;
+    for (Target* target : targets) {
+        if (!target || !*target || !Detail::PrepareTarget(*target->Internal())) {
+            Log::Error("Frame::BeginCompute: a target is empty or cannot be created");
+            return;
+        }
+        textures[textureCount++].texture = target->Internal()->Native;
+    }
+    for (const Buffer* buffer : buffers) {
+        if (!buffer || !*buffer || !Detail::CreateNative(*buffer->Internal())) {
+            Log::Error("Frame::BeginCompute: a buffer is empty or cannot be created");
+            return;
+        }
+        natives[bufferCount++].buffer = buffer->Internal()->Native;
+    }
+    Compute = SDL_BeginGPUComputePass(Commands, textures, textureCount, natives, bufferCount);
+    if (!Compute) Log::Error("SDL_BeginGPUComputePass: {}", SDL_GetError());
+    BoundCompute = nullptr;
+}
+
+void Frame::Bind(const ComputePipeline& pipeline) {
+    if (!Compute) {
+        Log::Warn("Frame::Bind: a compute pipeline needs a compute pass (Frame::BeginCompute)");
+        return;
+    }
+    if (!pipeline) return;
+    Detail::RefreshPipeline(*pipeline.Internal());
+    if (!pipeline.Internal()->Native) return;
+    SDL_BindGPUComputePipeline(Compute, pipeline.Internal()->Native);
+    BoundCompute = pipeline.Internal().get();
+}
+
+void Frame::Dispatch(int groupsX, int groupsY, int groupsZ) {
+    if (!Compute || !BoundCompute || groupsX <= 0 || groupsY <= 0 || groupsZ <= 0) return;
+    SDL_DispatchGPUCompute(Compute, Uint32(groupsX), Uint32(groupsY), Uint32(groupsZ));
+}
+
 void Frame::Bind(const Pipeline& pipeline) {
-    if (!Pass || !pipeline || !pipeline.Internal()->Native) return;
+    if (!Pass || !pipeline) return;
+    Detail::RefreshPipeline(*pipeline.Internal());
+    if (!pipeline.Internal()->Native) return;
     SDL_BindGPUGraphicsPipeline(Pass, pipeline.Internal()->Native);
     Bound = pipeline.Internal().get();
 }
 
 void Frame::BindTexture(int slot, const Target& target, ShaderStage stage) {
-    if (!Pass || !target || !Detail::PrepareTarget(*target.Internal())) return;
+    if (!(Pass || Compute) || !target || !Detail::PrepareTarget(*target.Internal())) return;
     SDL_GPUTextureSamplerBinding binding{target.Internal()->Native, Detail::SamplerFor(target.GetFilter())};
-    if (stage == ShaderStage::Vertex)
+    if (stage == ShaderStage::Compute)
+        SDL_BindGPUComputeSamplers(Compute, Uint32(slot), &binding, 1);
+    else if (stage == ShaderStage::Vertex)
         SDL_BindGPUVertexSamplers(Pass, Uint32(slot), &binding, 1);
     else
         SDL_BindGPUFragmentSamplers(Pass, Uint32(slot), &binding, 1);
 }
 
 void Frame::BindTexture(int slot, const Texture& texture, ShaderStage stage) {
-    if (!Pass || !texture) return;
+    if (!(Pass || Compute) || !texture) return;
     SDL_GPUTexture* native = Detail::GpuTexture(*texture.Internal());
     if (!native) return;
     SDL_GPUTextureSamplerBinding binding{native, Detail::SamplerFor(texture.GetFilter())};
-    if (stage == ShaderStage::Vertex)
+    if (stage == ShaderStage::Compute)
+        SDL_BindGPUComputeSamplers(Compute, Uint32(slot), &binding, 1);
+    else if (stage == ShaderStage::Vertex)
         SDL_BindGPUVertexSamplers(Pass, Uint32(slot), &binding, 1);
     else
         SDL_BindGPUFragmentSamplers(Pass, Uint32(slot), &binding, 1);
 }
 
 void Frame::BindStorage(ShaderStage stage, int slot, const Buffer& buffer) {
-    if (!Pass || !buffer || !Detail::CreateNative(*buffer.Internal())) return;
+    if (!(Pass || Compute) || !buffer || !Detail::CreateNative(*buffer.Internal())) return;
     SDL_GPUBuffer* native = buffer.Internal()->Native;
-    if (stage == ShaderStage::Vertex)
+    if (stage == ShaderStage::Compute)
+        SDL_BindGPUComputeStorageBuffers(Compute, Uint32(slot), &native, 1);
+    else if (stage == ShaderStage::Vertex)
         SDL_BindGPUVertexStorageBuffers(Pass, Uint32(slot), &native, 1);
     else
         SDL_BindGPUFragmentStorageBuffers(Pass, Uint32(slot), &native, 1);
@@ -747,7 +909,9 @@ void Frame::Push(ShaderStage stage, int slot, const void* data, std::size_t byte
         Log::Warn("Frame::Push: {} bytes (1 to 256)", bytes);
         return;
     }
-    if (stage == ShaderStage::Vertex)
+    if (stage == ShaderStage::Compute)
+        SDL_PushGPUComputeUniformData(Commands, Uint32(slot), data, Uint32(bytes));
+    else if (stage == ShaderStage::Vertex)
         SDL_PushGPUVertexUniformData(Commands, Uint32(slot), data, Uint32(bytes));
     else
         SDL_PushGPUFragmentUniformData(Commands, Uint32(slot), data, Uint32(bytes));

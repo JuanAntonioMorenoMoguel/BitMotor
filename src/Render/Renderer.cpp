@@ -15,6 +15,7 @@
 #include "Render/DebugPanelInternal.h"
 #include "Render/GpuInternal.h"
 #include "Render/ImageInternal.h"
+#include "Render/ModelInternal.h"
 #include "Render/Shaders/Compiled.h"
 #include "Render/SpritesInternal.h"
 
@@ -30,8 +31,12 @@ namespace BitMotor::Detail {
 
 namespace {
 
-constexpr SDL_GPUTextureFormat ScreenFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-constexpr SDL_GPUTextureFormat GBufferFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+// Config::LinearColor: the 8-bit screen is sRGB (the GPU encodes on write and blends in linear light) and
+// the albedo of the G-buffer keeps more precision, since linear values crowd into the darks.
+bool Linear = false;
+SDL_GPUTextureFormat ScreenFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+SDL_GPUTextureFormat AlbedoFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+constexpr SDL_GPUTextureFormat GBufferFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM; // normals
 constexpr SDL_GPUTextureFormat HdrFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
 
 SDL_GPUDevice* Device = nullptr;
@@ -228,7 +233,7 @@ bool CreatePipelines() {
 
     Pipeline.Fill = MakePipeline(fullscreen, fill, {ScreenFormat}, AlphaBlend());
     Pipeline.Hud = MakePipeline(spriteVertex, sprite, {ScreenFormat}, AlphaBlend());
-    Pipeline.World = MakePipeline(spriteVertex, world, {GBufferFormat, GBufferFormat}, PremultipliedBlend());
+    Pipeline.World = MakePipeline(spriteVertex, world, {AlbedoFormat, GBufferFormat}, PremultipliedBlend());
     Pipeline.Scene = MakePipeline(spriteVertex, sprite, {HdrFormat}, AlphaBlend());
     Pipeline.Glow = MakePipeline(spriteVertex, sprite, {HdrFormat}, AdditiveBlend());
     Pipeline.Light = MakePipeline(fullscreen, light, {HdrFormat}, PremultipliedBlend());
@@ -289,7 +294,7 @@ bool PrepareTargets() {
         return ok;
     }
     bool ok = Prepare(ScreenTarget, ScreenFormat, width, height) &&
-              Prepare(AlbedoTarget, GBufferFormat, width, height) &&
+              Prepare(AlbedoTarget, AlbedoFormat, width, height) &&
               Prepare(NormalTarget, GBufferFormat, width, height) && Prepare(SceneTarget, HdrFormat, width, height) &&
               Prepare(BloomA, HdrFormat, halfWidth, halfHeight) && Prepare(BloomB, HdrFormat, halfWidth, halfHeight);
     ScreenWidth = ok ? width : 0;
@@ -300,10 +305,16 @@ bool PrepareTargets() {
 // Copies this frame's sprites and lights to the GPU, before any pass draws.
 void Upload(SDL_GPUCommandBuffer* commands) {
     BuildSprites(SpriteQueue(), Instances, Batches);
-    const std::vector<LightInstance>& lights = LightQueue();
+    std::vector<LightInstance>& lights = LightQueue();
+    if (Linear)
+        for (LightInstance& light : lights) {
+            const Color c = ToLinear(Color(light.R, light.G, light.B, 1));
+            light.R = c.R, light.G = c.G, light.B = c.B;
+        }
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
     SpritesReady = SpriteBuffer.Fill(copy, Instances.data(), Uint32(Instances.size() * sizeof(SpriteInstance)));
     LightsReady = LightBuffer.Fill(copy, lights.data(), Uint32(lights.size() * sizeof(LightInstance)));
+    if (!ActiveRenderer()) UploadModels(copy);
     SDL_EndGPUCopyPass(copy);
     if (!SpritesReady) Instances.clear();
 }
@@ -344,7 +355,7 @@ void DrawBatches(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, SDL_GP
                                 0,
                                 float(batch.Source.Width()),
                                 float(batch.Source.Height()),
-                                0,
+                                Linear ? 1.0f : 0.0f,
                                 0};
         SDL_PushGPUVertexUniformData(commands, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 6, batch.Count, 0, 0);
@@ -383,19 +394,24 @@ void DrawScene(SDL_GPUCommandBuffer* commands) {
     }
 
     // 2. The scene: background, the lit world, glow and overlay.
-    SDL_GPURenderPass* pass = BeginPass(commands, {SceneTarget.Texture}, SDL_GPU_LOADOP_CLEAR, ClearColor);
+    SDL_GPURenderPass* pass = BeginPass(commands, {SceneTarget.Texture}, SDL_GPU_LOADOP_CLEAR, ToLinear(ClearColor));
     DrawBatches(commands, pass, Pipeline.Scene, {Layer::Background});
+    if (!ModelQueue().empty()) { // the 3D models, with their own depth, between the Background and the World
+        SDL_EndGPURenderPass(pass);
+        DrawModels(commands, SceneTarget.Texture, SceneTarget.Width, SceneTarget.Height);
+        pass = BeginPass(commands, {SceneTarget.Texture}, SDL_GPU_LOADOP_LOAD);
+    }
     if (world) {
         const std::vector<LightInstance>& lights = LightQueue();
         float count = Lighting::Enabled() && LightsReady && LightBuffer.Buffer ? float(lights.size()) : 0.0f;
-        Color ambient = Lighting::Ambient();
+        Color ambient = ToLinear(Lighting::Ambient());
         float params[8] = {ambient.R,
                            ambient.G,
                            ambient.B,
                            count,
                            Lighting::Enabled() ? 1.0f : 0.0f,
                            Lighting::Stepped() ? 1.0f : 0.0f,
-                           0,
+                           Linear ? 1.0f : 0.0f,
                            0};
         SDL_BindGPUGraphicsPipeline(pass, Pipeline.Light);
         SDL_GPUTextureSamplerBinding gbuffer[2] = {{AlbedoTarget.Texture, NearestSampler},
@@ -430,11 +446,11 @@ void DrawScene(SDL_GPUCommandBuffer* commands) {
 
     // 4. The screen: composite with the effects and the flash, the Hud, the fades.
     const ScreenEffects& effects = Screen::Effects();
-    Color flash = FlashColor();
+    Color flash = ToLinear(FlashColor());
     float composite[16] = {Lighting::Bloom(),
                            Lighting::Enabled() ? 1.0f : 0.0f,
                            float(Time::Total()),
-                           0,
+                           Linear ? 1.0f : 0.0f,
                            effects.Vignette,
                            effects.Grain,
                            effects.Aberration,
@@ -454,7 +470,8 @@ void DrawScene(SDL_GPUCommandBuffer* commands) {
     if (!Fills.empty()) {
         SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
         for (const Color& fill : Fills) {
-            SDL_PushGPUFragmentUniformData(commands, 0, &fill, sizeof(Color));
+            const Color color = ToLinear(fill);
+            SDL_PushGPUFragmentUniformData(commands, 0, &color, sizeof(Color));
             SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         }
     }
@@ -476,7 +493,8 @@ void DrawCustom(SDL_GPUCommandBuffer* commands) {
     SDL_GPURenderPass* pass = BeginPass(commands, {ScreenTarget.Texture}, SDL_GPU_LOADOP_LOAD);
     SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
     for (const Color& fill : Fills) {
-        SDL_PushGPUFragmentUniformData(commands, 0, &fill, sizeof(Color));
+        const Color color = ToLinear(fill);
+        SDL_PushGPUFragmentUniformData(commands, 0, &color, sizeof(Color));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
     }
     SDL_EndGPURenderPass(pass);
@@ -556,7 +574,11 @@ bool ApplyVSync(bool vsync) {
         else if (SDL_WindowSupportsGPUPresentMode(Device, Window, SDL_GPU_PRESENTMODE_MAILBOX))
             mode = SDL_GPU_PRESENTMODE_MAILBOX;
     }
-    if (!SDL_SetGPUSwapchainParameters(Device, Window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode)) {
+    // Linear colour: an sRGB swapchain, so the blit from the sRGB screen keeps the colours as they are.
+    SDL_GPUSwapchainComposition composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR;
+    if (Linear && SDL_WindowSupportsGPUSwapchainComposition(Device, Window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR))
+        composition = SDL_GPU_SWAPCHAINCOMPOSITION_SDR_LINEAR;
+    if (!SDL_SetGPUSwapchainParameters(Device, Window, composition, mode)) {
         Log::Warn("SDL_SetGPUSwapchainParameters: {}", SDL_GetError());
         return false;
     }
@@ -565,7 +587,10 @@ bool ApplyVSync(bool vsync) {
 
 } // namespace
 
-bool StartRenderer(SDL_Window* window, bool vsync) {
+bool StartRenderer(SDL_Window* window, bool vsync, bool linear) {
+    Linear = linear;
+    ScreenFormat = linear ? SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM_SRGB : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    AlbedoFormat = linear ? HdrFormat : SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 #ifdef NDEBUG
     constexpr bool debug = false;
 #else
@@ -589,6 +614,7 @@ bool StartRenderer(SDL_Window* window, bool vsync) {
         StopRenderer();
         return false;
     }
+    if (!StartModels()) Log::Warn("3D models will not be drawn");
     UploadTextures(); // the ones loaded before the window opened
     return true;
 }
@@ -596,6 +622,7 @@ bool StartRenderer(SDL_Window* window, bool vsync) {
 void StopRenderer() {
     if (!Device) return;
     SDL_WaitForGPUIdle(Device);
+    StopModels();
     FlatNormals = {};
     ReleaseTextures();
     ReleaseGpuObjects();
@@ -623,6 +650,14 @@ void StopRenderer() {
 
 SDL_GPUDevice* GpuDevice() { return Device; }
 
+bool LinearColor() { return Linear; }
+
+Color ToLinear(Color color) {
+    if (!Linear) return color;
+    auto channel = [](float c) { return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f); };
+    return {channel(color.R), channel(color.G), channel(color.B), color.A};
+}
+
 SDL_GPUSampler* SamplerFor(Filter filter) { return filter == Filter::Linear ? LinearSampler : NearestSampler; }
 
 void DrawSprites2D(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, bool hdr) {
@@ -642,6 +677,7 @@ void BeginFrame2D() {
     ClearColor = Colors::Black;
     Fills.clear();
     ResetSprites();
+    ResetModels();
 }
 
 void EndFrame2D() {
@@ -686,6 +722,7 @@ void ClearScreen(Color color) {
     ClearColor = color;
     Fills.clear();
     SpriteQueue().clear();
+    ResetModels();
 }
 
 void FillScreen(Color color) {

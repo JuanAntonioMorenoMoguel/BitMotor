@@ -10,6 +10,7 @@
 
 struct SDL_GPUCommandBuffer;
 struct SDL_GPURenderPass;
+struct SDL_GPUComputePass;
 
 // #include <BitMotor/Render/CustomRenderer.h>: not in BitMotor.h, so that its names (Frame, Target, Buffer...)
 // stay out of the games that do not need them.
@@ -63,7 +64,21 @@ public:
     void Begin(Target& target, std::optional<Color> clear = std::nullopt);
     // Into several targets at once (a pipeline with as many Targets formats).
     void Begin(std::initializer_list<Target*> targets, std::optional<Color> clear = std::nullopt);
+    // Ends the render pass or the compute pass that is open.
     void End();
+
+    // Starts a compute pass. `buffers` and `targets` are what its shaders write (set 1 of a compute shader:
+    // the targets first, then the buffers, in this order); everything else they only read. A pass that writes
+    // something cannot also read it as a texture or a read-only buffer.
+    //     frame.BeginCompute({&particles});
+    //     frame.Bind(simulate);
+    //     frame.Push(ShaderStage::Compute, 1, settings);
+    //     frame.Dispatch((count + 63) / 64);
+    //     frame.End();
+    void BeginCompute(std::initializer_list<const Buffer*> buffers, std::initializer_list<Target*> targets = {});
+    void Bind(const ComputePipeline& pipeline);
+    // Runs the bound compute pipeline: groups of ShaderResources::ThreadsX x Y x Z threads.
+    void Dispatch(int groupsX, int groupsY = 1, int groupsZ = 1);
 
     void Bind(const Pipeline& pipeline);
     // Textures for the shaders (sampler slot `slot`, in the stage's texture set).
@@ -89,6 +104,7 @@ public:
     // The SDL_GPU objects, to call SDL_GPU directly between BitMotor's calls.
     SDL_GPUCommandBuffer* NativeCommands() const { return Commands; }
     SDL_GPURenderPass* NativePass() const { return Pass; }
+    SDL_GPUComputePass* NativeComputePass() const { return Compute; }
 
     // Internal: made by BitMotor for each frame.
     Frame(SDL_GPUCommandBuffer* commands, Target* screen) : Commands(commands), ScreenTarget(screen) {}
@@ -99,10 +115,12 @@ public:
 private:
     SDL_GPUCommandBuffer* Commands = nullptr;
     SDL_GPURenderPass* Pass = nullptr;
+    SDL_GPUComputePass* Compute = nullptr;
     Target* ScreenTarget = nullptr;
     // The pass's first target (Draw2D draws into it) and the pipeline bound now.
     Target* First = nullptr;
     const Detail::PipelineData* Bound = nullptr;
+    const Detail::ComputePipelineData* BoundCompute = nullptr;
 };
 
 namespace Detail {

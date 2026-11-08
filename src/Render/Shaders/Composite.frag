@@ -4,7 +4,7 @@
 layout(set = 2, binding = 0) uniform sampler2D Scene;
 layout(set = 2, binding = 1) uniform sampler2D Bloom;
 layout(set = 3, binding = 0) uniform Params {
-    vec4 A; // bloom strength, tone curve on, time, -
+    vec4 A; // bloom strength, tone curve on, time, linear colour
     vec4 B; // vignette, grain, aberration (pixels), saturation
     vec4 C; // flash rgb, flash amount
     vec4 D; // screen size xy, -, -
@@ -40,7 +40,14 @@ void main() {
         vec2 q = InUv - 0.5;
         color *= 1.0 - B.x * smoothstep(0.25, 0.75, length(q * vec2(1.0, 0.85)) * 1.15);
     }
-    if (B.y > 0.0) color += (Hash(gl_FragCoord.xy + fract(A.z * 7.13) * 311.0) - 0.5) * B.y;
+    if (B.y > 0.0) {
+        // Grain is even to the eye: in linear light it goes on the sRGB-like encoding, or the darks get noisy.
+        float grain = (Hash(gl_FragCoord.xy + fract(A.z * 7.13) * 311.0) - 0.5) * B.y;
+        if (A.w > 0.5)
+            color = pow(max(pow(max(color, 0.0), vec3(1.0 / 2.2)) + grain, 0.0), vec3(2.2));
+        else
+            color += grain;
+    }
     color = mix(color, C.rgb, C.a);
     Out = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

@@ -34,6 +34,11 @@ struct Config {
     // screen is in the window (Screen::PixelSize), not Width x Height, so shapes drawn by shaders stay sharp
     // at any window size. Positions stay logical. BitMotor's 2D renderer always draws at Width x Height.
     bool NativeResolution = false;
+    // Blends and lights in linear light, as physics does: translucent glows, bloom and gradients look right.
+    // Colours, textures and Color values stay sRGB as they are authored; the GPU converts them. Rgba8
+    // targets of a CustomRenderer are then sRGB too (its shaders write linear values), and compute shaders
+    // cannot write them. The debug panel looks a little paler. false: everything in sRGB, as before.
+    bool LinearColor = false;
     bool Fullscreen = false;
     bool VSync = true;
     // Game::Update calls per second, with a fixed Time::Delta (deterministic: same input, same result).
