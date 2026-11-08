@@ -1,4 +1,8 @@
 // The audio device and the decoders, with miniaudio (WAV, FLAC, MP3) and stb_vorbis (OGG).
+// miniaudio includes <windows.h>: without NOMINMAX its min and max macros break std::min and std::max.
+#if defined(_WIN32) && !defined(NOMINMAX)
+#define NOMINMAX
+#endif
 #include "Audio/AudioInternal.h"
 
 #include "BitMotor/Core/Log.h"
