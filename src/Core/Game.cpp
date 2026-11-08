@@ -17,6 +17,7 @@
 #include "Core/SettingsInternal.h"
 #include "Core/TasksInternal.h"
 #include "Core/TimeInternal.h"
+#include "Platform/PlatformInternal.h"
 #include "Render/DebugPanelInternal.h"
 #include "Render/GpuInternal.h"
 #include "Render/ImageInternal.h"
@@ -25,6 +26,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <cctype>
 #include <chrono>
 #include <filesystem>
 
@@ -79,6 +81,19 @@ void SetIcon(SDL_Window* window, const std::string& icon) {
     SDL_DestroySurface(surface);
 }
 
+// What the system shows for the app (audio mixers, the about box on some desktops) and its id.
+void SetAppMetadata(const Config& config) {
+    std::string id;
+    for (const std::string* part : {&config.Organization, &config.Title}) {
+        if (!id.empty()) id += '.';
+        for (char c : *part)
+            if (std::isalnum(static_cast<unsigned char>(c))) id += char(std::tolower(static_cast<unsigned char>(c)));
+    }
+    SDL_SetAppMetadata(config.Title.c_str(), config.Version.empty() ? nullptr : config.Version.c_str(), id.c_str());
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, config.Organization.c_str());
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game");
+}
+
 } // namespace
 
 void Quit() { QuitRequested = true; }
@@ -86,6 +101,7 @@ void Quit() { QuitRequested = true; }
 namespace Detail {
 
 int Run(const Config& config, Game& game, void (*setup)()) {
+    SetAppMetadata(config);
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         Log::Error("SDL_Init: {}", SDL_GetError());
         return 1;
@@ -106,7 +122,7 @@ int Run(const Config& config, Game& game, void (*setup)()) {
     }
     SetIcon(window, config.Icon);
     AttachDisplay(window, config.Width, config.Height, vsync, config.IntegerScaling, config.NativeResolution);
-    if (!StartRenderer(window, vsync)) {
+    if (!StartRenderer(window, vsync, config.LinearColor)) {
         AttachDisplay(nullptr, 0, 0, vsync, config.IntegerScaling);
         SDL_DestroyWindow(window);
         SDL_Quit();
@@ -152,6 +168,7 @@ int Run(const Config& config, Game& game, void (*setup)()) {
             UpdateScenes();
         }
         FlushEvents();
+        FlushPlatform();
         UpdateAudio(realDt);
 
         BeginDraw();
@@ -177,6 +194,8 @@ int Run(const Config& config, Game& game, void (*setup)()) {
     ShutdownCustomRenderer(); // before its service goes
     StopServices();           // after the game's Stop, which may still use them
     FlushEvents();
+    FlushPlatform();
+    ResetPlatform();
     StopInput();
     StopAudio();
     ResetAudio();

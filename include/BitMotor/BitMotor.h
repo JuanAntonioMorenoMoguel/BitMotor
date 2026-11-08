@@ -37,9 +37,12 @@
 #include "BitMotor/Audio/Sound.h"
 #include "BitMotor/Audio/Synth.h"
 
+#include "BitMotor/Platform/Platform.h"
+
 #include "BitMotor/Render/Atlas.h"
 #include "BitMotor/Render/Camera.h"
 #include "BitMotor/Render/Light.h"
+#include "BitMotor/Render/Model.h"
 #include "BitMotor/Render/Particles.h"
 #include "BitMotor/Render/Sprite.h"
 #include "BitMotor/Render/Texture.h"

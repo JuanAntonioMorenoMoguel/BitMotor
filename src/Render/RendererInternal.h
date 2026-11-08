@@ -15,11 +15,15 @@ struct SDL_GPUTexture;
 namespace BitMotor::Detail {
 
 // Creates the GPU device for the window (false and a log error if there is no usable GPU) and stops it.
-bool StartRenderer(SDL_Window* window, bool vsync);
+// `linear`: Config::LinearColor.
+bool StartRenderer(SDL_Window* window, bool vsync, bool linear = false);
 void StopRenderer();
 // nullptr while there is no renderer.
 SDL_GPUDevice* GpuDevice();
 void SetRendererVSync(bool vsync);
+// Config::LinearColor, and a colour as the shaders want it then (sRGB to linear; unchanged otherwise).
+bool LinearColor();
+Color ToLinear(Color color);
 
 // Each frame: BeginFrame2D before the game draws, EndFrame2D to render and present it.
 void BeginFrame2D();

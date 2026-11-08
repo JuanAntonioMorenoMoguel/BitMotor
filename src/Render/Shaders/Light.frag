@@ -13,7 +13,7 @@ layout(std430, set = 2, binding = 2) readonly buffer Lights {
 };
 layout(set = 3, binding = 0) uniform Params {
     vec4 Ambient; // rgb, light count
-    vec4 Options; // lighting on, stepped, -, -
+    vec4 Options; // lighting on, stepped, linear colour, -
 };
 layout(location = 0) out vec4 Out;
 
@@ -48,8 +48,12 @@ void main() {
         light += l.Color.rgb * fade * (0.3 + 0.7 * max(dot(n, normalize(d)), 0.0));
     }
     if (Options.y > 0.5) {
+        // The bands are even steps of brightness as the eye sees it: in linear light, quantise its sRGB-like
+        // encoding (otherwise the dark steps are huge and the dithering turns into noise).
         float level = max(max(light.r, light.g), light.b);
-        float banded = floor(level * 7.0 + Bayer4(floor(gl_FragCoord.xy)) * 0.9) / 7.0;
+        float perceived = Options.z > 0.5 ? pow(level, 1.0 / 2.2) : level;
+        float banded = floor(perceived * 7.0 + Bayer4(floor(gl_FragCoord.xy)) * 0.9) / 7.0;
+        if (Options.z > 0.5) banded = pow(banded, 2.2);
         light *= banded / max(level, 1e-4);
     }
     Out = vec4((albedo * light + albedo * emission * 1.5) * g.a, g.a);

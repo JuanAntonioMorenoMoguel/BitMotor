@@ -1,0 +1,19 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Writes the scene's background straight into the target, pixel by pixel: slow colour waves. One thread per
+// pixel, in groups of 8x8.
+layout(local_size_x = 8, local_size_y = 8) in;
+#define GLOBALS_SET 2
+#include "Globals.glsl"
+
+layout(set = 1, binding = 0, rgba16f) uniform writeonly image2D Scene;
+
+void main() {
+    ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(Scene);
+    if (pixel.x >= size.x || pixel.y >= size.y) return;
+    vec2 uv = vec2(pixel) / vec2(size);
+    float t = Clock.x * 0.25;
+    vec3 color = 0.5 + 0.5 * cos(t + vec3(uv.x * 3.0, uv.y * 2.0 + 2.0, uv.x * 2.0 + uv.y + 4.0));
+    imageStore(Scene, pixel, vec4(color * 0.06, 1.0));
+}

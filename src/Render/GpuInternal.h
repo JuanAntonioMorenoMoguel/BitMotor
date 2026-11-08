@@ -5,6 +5,8 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <memory>
 #include <vector>
 
 namespace BitMotor::Detail {
@@ -14,15 +16,32 @@ struct ShaderData {
     ShaderStage Stage = ShaderStage::Vertex;
     ShaderResources Resources;
     bool Builtin = false; // BitMotor's fullscreen vertex shader
+    // Goes up each time the code is reloaded, so the pipelines that use it are remade.
+    int Version = 0;
 };
 
 struct PipelineData {
     SDL_GPUGraphicsPipeline* Native = nullptr;
-    std::vector<TargetFormat> Targets;
+    PipelineInfo Info;
+    int VertexVersion = 0, FragmentVersion = 0; // of the shaders it was made with
     bool UsesVertices = false;
     PipelineData();
     ~PipelineData();
 };
+
+struct ComputePipelineData {
+    SDL_GPUComputePipeline* Native = nullptr;
+    Shader Source;
+    int Version = 0;
+    ComputePipelineData();
+    ~ComputePipelineData();
+};
+
+// Remakes a pipeline whose shaders were reloaded (Debug). Keeps the old one if the new code fails.
+void RefreshPipeline(PipelineData& pipeline);
+void RefreshPipeline(ComputePipelineData& pipeline);
+// Shader::Load in Debug: watches the source of a .spv made by BitMotor_Shaders and recompiles it on save.
+void WatchShaderSource(const std::shared_ptr<ShaderData>& shader, const std::filesystem::path& spv);
 
 struct BufferData {
     SDL_GPUBuffer* Native = nullptr;

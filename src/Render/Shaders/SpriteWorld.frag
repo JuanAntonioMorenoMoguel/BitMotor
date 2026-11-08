@@ -8,11 +8,15 @@ layout(location = 0) in vec2 InUv;
 layout(location = 1) in vec4 InColor;
 layout(location = 2) in float InFlash;
 layout(location = 3) in vec2 InTurn;
+layout(location = 4) flat in float InLinear;
 layout(location = 0) out vec4 OutAlbedo;
 layout(location = 1) out vec4 OutNormal;
 
+vec3 SrgbToLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
+
 void main() {
     vec4 texel = texture(Image, InUv);
+    if (InLinear > 0.5) texel.rgb = SrgbToLinear(texel.rgb);
     float alpha = texel.a * InColor.a;
     if (alpha < 0.004) discard;
     vec3 color = mix(texel.rgb * InColor.rgb, vec3(1.0), InFlash);

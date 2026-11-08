@@ -1,0 +1,38 @@
+#version 450
+#extension GL_GOOGLE_include_directive : require
+// Moves every particle: pulled towards the mouse while it is held, slowed by drag, bouncing off the edges.
+// One thread per particle, 64 per group.
+layout(local_size_x = 64) in;
+#define GLOBALS_SET 2
+#include "Globals.glsl"
+#include "Particle.glsl"
+
+layout(std430, set = 1, binding = 0) buffer Particles { Particle Items[]; };
+layout(set = 2, binding = 1) uniform Settings {
+    vec4 Pull; // x, y: where; z: strength (0 when the mouse is up); w: how many particles
+};
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= uint(Pull.w)) return;
+    Particle p = Items[index];
+    float dt = Clock.y;
+    vec2 toMouse = Pull.xy - p.Position;
+    float distance = max(length(toMouse), 8.0);
+    p.Velocity += toMouse / distance * Pull.z * dt * (200.0 / (distance + 50.0)) * 30.0;
+    // A slow swirl so they never stop.
+    vec2 centre = Screen.xy * 0.5;
+    vec2 away = p.Position - centre;
+    p.Velocity += vec2(-away.y, away.x) * 0.15 * dt;
+    p.Velocity *= exp(-0.6 * dt);
+    p.Position += p.Velocity * dt;
+    if (p.Position.x < 0.0 || p.Position.x > Screen.x) {
+        p.Velocity.x = -p.Velocity.x;
+        p.Position.x = clamp(p.Position.x, 0.0, Screen.x);
+    }
+    if (p.Position.y < 0.0 || p.Position.y > Screen.y) {
+        p.Velocity.y = -p.Velocity.y;
+        p.Position.y = clamp(p.Position.y, 0.0, Screen.y);
+    }
+    Items[index] = p;
+}

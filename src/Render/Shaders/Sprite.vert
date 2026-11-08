@@ -12,13 +12,17 @@ layout(std430, set = 0, binding = 0) readonly buffer Sprites {
 };
 layout(set = 1, binding = 0) uniform Frame {
     vec4 Screen;  // screen size xy, first instance of this batch, -
-    vec4 Texture; // texture size xy, -, -
+    vec4 Texture; // texture size xy, linear colour (1) or not (0), -
 };
 
 layout(location = 0) out vec2 OutUv;
 layout(location = 1) out vec4 OutColor;
 layout(location = 2) out float OutFlash;
 layout(location = 3) out vec2 OutTurn; // rotation, flipped (1) or not (0): for the normal maps
+// Config::LinearColor: colours and textures are sRGB; the shaders work in linear light.
+layout(location = 4) flat out float OutLinear;
+
+vec3 SrgbToLinear(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c)); }
 
 const vec2 Corners[6] = vec2[](vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 0), vec2(1, 1), vec2(0, 1));
 
@@ -44,7 +48,8 @@ void main() {
     gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
     vec2 uvCorner = vec2(flipped ? 1.0 - corner.x : corner.x, corner.y);
     OutUv = (s.B.xy + uvCorner * s.B.zw) / Texture.xy;
-    OutColor = s.C;
+    OutColor = Texture.z > 0.5 ? vec4(SrgbToLinear(s.C.rgb), s.C.a) : s.C;
+    OutLinear = Texture.z;
     OutFlash = s.D.y;
     OutTurn = vec2(s.D.x, flipped ? 1.0 : 0.0);
 }
