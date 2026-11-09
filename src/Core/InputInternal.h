@@ -2,6 +2,10 @@
 #include "BitMotor/Core/Keys.h"
 #include "BitMotor/Math/Vector.h"
 
+#include <string>
+#include <string_view>
+#include <vector>
+
 union SDL_Event;
 
 // Input is split in two: Input.cpp keeps the state and knows nothing about SDL (so the tests can feed it),
@@ -29,6 +33,18 @@ Vec2 FrameMouseDelta();
 float FrameWheel();
 // A Rebind took a control (or was cancelled) during this frame's events.
 bool RebindEndedThisFrame();
+
+// Text typing (UI::TextField): what was typed (UTF-8) and every key that went down, auto-repeats included,
+// since the previous frame. The SDL side feeds them; InputFrame turns them into this frame's.
+void InputText(std::string_view utf8);
+void InputKeyRepeat(Key key);
+const std::string& FrameText();
+const std::vector<Key>& FrameKeys();
+// Shows the system's text input (and the on-screen keyboard where there is one) while a field is edited.
+void SetTextInput(bool on);
+// The system clipboard (empty without a window).
+std::string ClipboardText();
+void SetClipboardText(const std::string& text);
 
 // SDL side (InputSdl.cpp).
 void StartInput();

@@ -7,6 +7,8 @@
 
 #include <functional>
 #include <initializer_list>
+#include <span>
+#include <string>
 #include <string_view>
 
 // Immediate interface: call the widgets every frame in Draw, and each one draws itself and answers there.
@@ -84,6 +86,34 @@ bool Toggle(BitMotor::Rect area, std::string_view label, bool& value, bool enabl
 // within [min, max]. True on every frame it changes.
 bool Slider(BitMotor::Rect area, std::string_view label, float& value, float min = 0, float max = 1, float step = 0.05f,
             bool enabled = true);
+// The label on the left, the chosen option on the right half. A click or Confirm opens the list of options
+// over everything (the mouse or Up/Down and Confirm choose, Back or a click outside close it); Left/Right
+// go through the options without opening it. True on the frame `selected` changes.
+//     UI::Dropdown({70, 120, 180, 14}, Tr("options.language"), language, {"Español", "English"});
+bool Dropdown(BitMotor::Rect area, std::string_view label, int& selected, std::span<const std::string> options,
+              bool enabled = true);
+bool Dropdown(BitMotor::Rect area, std::string_view label, int& selected,
+              std::initializer_list<std::string_view> options, bool enabled = true);
+
+struct TextFieldOptions {
+    // Grey text shown while it is empty.
+    std::string_view Placeholder = {};
+    // Most characters it takes (0: no limit).
+    int MaxLength = 0;
+    // Shows asterisks.
+    bool Password = false;
+    bool Enabled = true;
+};
+// A box to type in: the label on the left and the box on the right half (with no label, the box fills the
+// area). A click or Confirm starts typing; Enter, Escape, a click elsewhere or the gamepad's Confirm/Back
+// stop. Arrows, Home, End, Backspace and Delete edit; Ctrl+V pastes and Ctrl+C copies. True on every frame
+// the text changes. While typing, the other widgets and UI::Pressed get no keys; check UI::Typing() so your
+// own keys (WASD...) do not move the player as well.
+//     UI::TextField({70, 140, 180, 14}, Tr("profile.name"), name, {.Placeholder = "Player", .MaxLength = 12});
+bool TextField(BitMotor::Rect area, std::string_view label, std::string& text, const TextFieldOptions& options = {});
+// A TextField is being typed in.
+bool Typing();
+
 // The same in a colour of their own (see Theme: the tint colours the frame and the label). `tooltip` is
 // shown while it is pointed at, also when it is disabled (to say why).
 void Panel(BitMotor::Rect area, std::string_view title, Color tint);

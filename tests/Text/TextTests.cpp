@@ -1,6 +1,7 @@
 #include "Printing.h"
 #include "Testing.h"
 
+#include "BitMotor/Core/Files.h"
 #include "BitMotor/Render/Atlas.h"
 #include "BitMotor/Text/Language.h"
 #include "Core/TimeInternal.h"
@@ -204,7 +205,8 @@ TEST(TypewriterShowsLettersOverTime) {
 
 TEST(TranslatorChangesThePlainText) {
     // gettext style: the original text is the key.
-    Text::SetTranslator([](std::string_view text) { return text == "Hola" ? std::string("Hello there") : std::string(text); });
+    Text::SetTranslator(
+        [](std::string_view text) { return text == "Hola" ? std::string("Hello there") : std::string(text); });
     CHECK_EQ(Text::Measure("Hola").X, Text::Measure("Hello there").X);
     std::vector<std::string> lines = Text::Wrap("Hola", 1000);
     CHECK_EQ(lines.size(), size_t(1));
@@ -212,4 +214,62 @@ TEST(TranslatorChangesThePlainText) {
     CHECK_EQ(Text::Layout("Hola", {0, 0}).size(), Text::Layout("Hello there", {0, 0}).size());
     Text::SetTranslator(nullptr);
     CHECK(Text::Measure("Hola").X < Text::Measure("Hello there").X);
+}
+
+TEST(TrueTypeFontsAreRasterised) {
+    auto bytes = Files::ReadBytes(BITMOTOR_TEST_FONT);
+    CHECK(bytes.has_value());
+    if (!bytes) return;
+    // Press Start 2P is drawn on an 8-pixel grid: at Size 8 and without smoothing, its letters are exact.
+    Detail::BakedFont baked;
+    std::string error;
+    CHECK(Detail::BakeTtf(*bytes, {.Size = 8, .Smooth = false}, baked, error));
+    CHECK_EQ(baked.Width, 512);
+    CHECK(baked.Height > 0);
+    CHECK_EQ(baked.CapHeight, 7.0f);
+    CHECK_EQ(baked.Space, 8.0f);
+    auto find = [&](char32_t c) -> const Detail::BakedGlyph* {
+        for (const Detail::BakedGlyph& glyph : baked.Glyphs)
+            if (glyph.Character == c) return &glyph;
+        return nullptr;
+    };
+    const Detail::BakedGlyph* h = find(U'H');
+    CHECK(h != nullptr);
+    if (!h) return;
+    CHECK_EQ(h->Advance, 8.0f);
+    CHECK_EQ(h->Offset.Y, 0.0f); // the top of the capital is the pen's line
+    CHECK_EQ(h->Area.Height, 7.0f);
+    // Every pixel is on or off, white.
+    bool hard = true;
+    for (std::size_t i = 0; i < baked.Pixels.size(); i += 4)
+        hard = hard && (baked.Pixels[i + 3] == 0 || baked.Pixels[i + 3] == 255);
+    CHECK(hard);
+    CHECK(find(U'ñ') != nullptr);
+    CHECK(find(U'漢') == nullptr);
+    // Smooth: soft edges at an off-grid size.
+    CHECK(Detail::BakeTtf(*bytes, {.Size = 13}, baked, error));
+    bool soft = false;
+    for (std::size_t i = 0; i < baked.Pixels.size(); i += 4)
+        soft = soft || (baked.Pixels[i + 3] > 0 && baked.Pixels[i + 3] < 255);
+    CHECK(soft);
+    // Not a font.
+    const std::uint8_t junk[64] = {1, 2, 3};
+    CHECK(!Detail::BakeTtf(junk, {}, baked, error));
+    CHECK(!error.empty());
+}
+
+TEST(TrueTypeFontsDrawText) {
+    Font font = Font::Load(BITMOTOR_TEST_FONT, {.Size = 8, .Smooth = false});
+    CHECK(font);
+    CHECK_EQ(font.CapHeight(), 7.0f);
+    CHECK(font.Has(U'A'));
+    CHECK(font.Has(U'é'));
+    // Fixed width: 8 pixels per letter; Measure ends at the last pixel of the last letter.
+    const Vec2 size = Text::Measure("HH", {.Font = font});
+    CHECK_EQ(size.Y, 7.0f);
+    CHECK(size.X > 8 && size.X <= 16);
+    std::vector<Glyph> glyphs = Text::Layout("AB", {10, 20}, {.Font = font});
+    CHECK_EQ(glyphs.size(), 2u);
+    if (glyphs.size() == 2) CHECK_EQ(glyphs[1].Position.X - glyphs[0].Position.X, 8.0f);
+    CHECK(!Font::Load("missing.ttf"));
 }

@@ -25,9 +25,40 @@ TextureData::~TextureData() {
     if (Gpu && GpuDevice()) SDL_ReleaseGPUTexture(GpuDevice(), Gpu);
 }
 
+namespace {
+
+// A RenderTexture's image: drawable and sampled, cleared to transparent so it never shows garbage.
+SDL_GPUTexture* MakeTarget(SDL_GPUDevice* device, TextureData& texture) {
+    SDL_GPUTextureCreateInfo info{};
+    info.type = SDL_GPU_TEXTURETYPE_2D;
+    info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;
+    info.width = Uint32(texture.Width);
+    info.height = Uint32(texture.Height);
+    info.layer_count_or_depth = 1;
+    info.num_levels = 1;
+    SDL_GPUTexture* gpu = SDL_CreateGPUTexture(device, &info);
+    if (!gpu) {
+        Log::Error("RenderTexture ({}x{}): {}", texture.Width, texture.Height, SDL_GetError());
+        return nullptr;
+    }
+    SDL_GPUCommandBuffer* commands = SDL_AcquireGPUCommandBuffer(device);
+    SDL_GPUColorTargetInfo target{};
+    target.texture = gpu;
+    target.load_op = SDL_GPU_LOADOP_CLEAR;
+    target.store_op = SDL_GPU_STOREOP_STORE;
+    SDL_EndGPURenderPass(SDL_BeginGPURenderPass(commands, &target, 1, nullptr));
+    SDL_SubmitGPUCommandBuffer(commands);
+    texture.Gpu = gpu;
+    return gpu;
+}
+
+} // namespace
+
 SDL_GPUTexture* GpuTexture(TextureData& texture) {
     SDL_GPUDevice* device = GpuDevice();
     if (texture.Gpu || !device) return texture.Gpu;
+    if (texture.Target) return MakeTarget(device, texture);
     if (texture.Pixels.empty()) return nullptr; // it was already on a device that stopped
 
     SDL_GPUTextureCreateInfo info{};

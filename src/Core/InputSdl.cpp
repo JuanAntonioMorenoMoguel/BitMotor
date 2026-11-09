@@ -380,7 +380,13 @@ void HandleInputEvent(const SDL_Event& event) {
     switch (event.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:
-        if (!event.key.repeat) InputKey(FromScancode(event.key.scancode), event.type == SDL_EVENT_KEY_DOWN);
+        if (!event.key.repeat)
+            InputKey(FromScancode(event.key.scancode), event.type == SDL_EVENT_KEY_DOWN);
+        else if (event.type == SDL_EVENT_KEY_DOWN)
+            InputKeyRepeat(FromScancode(event.key.scancode));
+        break;
+    case SDL_EVENT_TEXT_INPUT:
+        if (event.text.text) InputText(event.text.text);
         break;
     case SDL_EVENT_MOUSE_MOTION:
         if (!Input::MouseForced()) InputMouseMove(MouseToLogical(event.motion.x, event.motion.y));
@@ -423,6 +429,27 @@ void HandleInputEvent(const SDL_Event& event) {
     default:
         break;
     }
+}
+
+void SetTextInput(bool on) {
+    SDL_Window* window = CurrentWindow();
+    if (!window || SDL_TextInputActive(window) == on) return;
+    if (on)
+        SDL_StartTextInput(window);
+    else
+        SDL_StopTextInput(window);
+}
+
+std::string ClipboardText() {
+    if (!CurrentWindow()) return {};
+    char* text = SDL_GetClipboardText();
+    std::string out = text ? text : "";
+    SDL_free(text);
+    return out;
+}
+
+void SetClipboardText(const std::string& text) {
+    if (CurrentWindow()) SDL_SetClipboardText(text.c_str());
 }
 
 } // namespace Detail

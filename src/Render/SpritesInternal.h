@@ -1,4 +1,5 @@
 #pragma once
+#include "BitMotor/Colors/Colors.h"
 #include "BitMotor/Render/Camera.h"
 #include "BitMotor/Render/Light.h"
 #include "BitMotor/Render/Sprite.h"
@@ -57,6 +58,25 @@ SpriteInstance MakeInstance(const Sprite2D& sprite, const Camera2D* camera);
 std::vector<QueuedSprite>& SpriteQueue();
 // Back to the default camera and empty queues (sprites and lights), at the start of each frame.
 void ResetSprites();
+
+// What a RenderTexture got between Begin and End this frame (Sprites.cpp collects it, the renderer draws it
+// before the screen, in this order).
+struct TargetDraw {
+    Texture Target;
+    bool Clear = true;
+    Color ClearColor = Colors::Transparent;
+    std::vector<QueuedSprite> Queue;
+    std::vector<SpriteBatch> Batches; // filled by the renderer
+};
+std::vector<TargetDraw>& TargetDraws();
+// Screen::Draw goes into this texture's queue until EndTargetDraw. False (and a log error) inside another.
+bool BeginTargetDraw(const Texture& target, bool clear, Color color);
+void EndTargetDraw();
+bool InTargetDraw();
+// Screen::Clear inside a RenderTexture: drops what it got and clears it with `color`.
+void ClearTargetDraw(Color color);
+// The centre of what is being drawn now: the screen's, or the RenderTexture's.
+Vec2 ViewCenter();
 
 // Orders the queue by layer (World by depth, keeping the draw order on ties) and groups it into batches.
 void BuildSprites(const std::vector<QueuedSprite>& queue, std::vector<SpriteInstance>& instances,

@@ -8,10 +8,12 @@
 
 #include "BitMotor/Colors/Colors.h"
 #include "BitMotor/Core/Log.h"
+#include "BitMotor/Core/Scenes.h"
 #include "BitMotor/Core/Screen.h"
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Render/Light.h"
 #include "Core/DisplayInternal.h"
+#include "Core/ScenesInternal.h"
 #include "Render/DebugPanelInternal.h"
 #include "Render/GpuInternal.h"
 #include "Render/ImageInternal.h"
@@ -26,6 +28,7 @@
 #include <cmath>
 #include <cstring>
 #include <initializer_list>
+#include <optional>
 
 namespace BitMotor::Detail {
 
@@ -38,6 +41,8 @@ SDL_GPUTextureFormat ScreenFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 SDL_GPUTextureFormat AlbedoFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 constexpr SDL_GPUTextureFormat GBufferFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM; // normals
 constexpr SDL_GPUTextureFormat HdrFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_FLOAT;
+// RenderTextures: plain 8-bit sRGB values, like every other texture (also with Config::LinearColor).
+constexpr SDL_GPUTextureFormat TextureFormat = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
 
 SDL_GPUDevice* Device = nullptr;
 SDL_Window* Window = nullptr;
@@ -52,10 +57,13 @@ struct Pipelines {
     SDL_GPUGraphicsPipeline* BloomExtract = nullptr;
     SDL_GPUGraphicsPipeline* BloomBlur = nullptr;
     SDL_GPUGraphicsPipeline* Composite = nullptr;
-    SDL_GPUGraphicsPipeline* HudGlow = nullptr; // additive sprites on an 8-bit target (Frame::Draw2D)
+    SDL_GPUGraphicsPipeline* HudGlow = nullptr;     // additive sprites on an 8-bit target (Frame::Draw2D)
+    SDL_GPUGraphicsPipeline* Texture = nullptr;     // sprites into a RenderTexture
+    SDL_GPUGraphicsPipeline* TextureGlow = nullptr; // additive sprites into a RenderTexture
 
-    std::array<SDL_GPUGraphicsPipeline*, 10> All() const {
-        return {Fill, Hud, World, Scene, Glow, Light, BloomExtract, BloomBlur, Composite, HudGlow};
+    std::array<SDL_GPUGraphicsPipeline*, 12> All() const {
+        return {Fill,         Hud,       World,     Scene,   Glow,    Light,
+                BloomExtract, BloomBlur, Composite, HudGlow, Texture, TextureGlow};
     }
 } Pipeline;
 
@@ -120,11 +128,18 @@ struct Target {
     Uint32 Width = 0, Height = 0;
 };
 Target ScreenTarget, AlbedoTarget, NormalTarget, SceneTarget, BloomA, BloomB;
+// The last frame of the old scene, held while a Transition::Slide pushes it away.
+Target SlideTarget;
 Uint32 ScreenWidth = 0, ScreenHeight = 0;
 
 // This frame's requests.
 Color ClearColor = Colors::Black;
-std::vector<Color> Fills;
+struct Fill {
+    Color Tint;
+    bool Whole = true;
+    Rect Area; // logical pixels, when not Whole
+};
+std::vector<Fill> Fills;
 std::filesystem::path ScreenshotPath;
 
 // What the sprite vertex shader gets per batch (set 1, binding 0).
@@ -241,6 +256,8 @@ bool CreatePipelines() {
     Pipeline.BloomBlur = MakePipeline(fullscreen, blur, {HdrFormat}, NoBlend());
     Pipeline.Composite = MakePipeline(fullscreen, composite, {ScreenFormat}, NoBlend());
     Pipeline.HudGlow = MakePipeline(spriteVertex, sprite, {ScreenFormat}, AdditiveBlend());
+    Pipeline.Texture = MakePipeline(spriteVertex, sprite, {TextureFormat}, AlphaBlend());
+    Pipeline.TextureGlow = MakePipeline(spriteVertex, sprite, {TextureFormat}, AdditiveBlend());
 
     for (SDL_GPUShader* shader : {fullscreen, fill, spriteVertex, sprite, world, light, extract, blur, composite})
         if (shader) SDL_ReleaseGPUShader(Device, shader);
@@ -305,6 +322,13 @@ bool PrepareTargets() {
 // Copies this frame's sprites and lights to the GPU, before any pass draws.
 void Upload(SDL_GPUCommandBuffer* commands) {
     BuildSprites(SpriteQueue(), Instances, Batches);
+    // The RenderTextures' sprites go after the screen's in the same buffer.
+    std::vector<SpriteInstance> more;
+    for (TargetDraw& target : TargetDraws()) {
+        BuildSprites(target.Queue, more, target.Batches);
+        for (SpriteBatch& batch : target.Batches) batch.First += std::uint32_t(Instances.size());
+        Instances.insert(Instances.end(), more.begin(), more.end());
+    }
     std::vector<LightInstance>& lights = LightQueue();
     if (Linear)
         for (LightInstance& light : lights) {
@@ -323,13 +347,22 @@ bool HasLayer(Layer layer) {
     return std::any_of(Batches.begin(), Batches.end(), [&](const SpriteBatch& b) { return b.Where == layer; });
 }
 
-// The batches of some layers, with `pipeline`. World batches also bind their normal maps.
+const std::initializer_list<Layer> AllLayers = {Layer::Background, Layer::World, Layer::Glow, Layer::Overlay,
+                                                Layer::Hud};
+
+// The batches of some layers, with `pipeline`. World batches also bind their normal maps. `batches`: the
+// screen's (Batches) or a RenderTexture's; `logical`: the size their positions are in; `linear`: the shader
+// turns colours to linear light.
 void DrawBatches(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, SDL_GPUGraphicsPipeline* pipeline,
-                 std::initializer_list<Layer> layers, SDL_GPUGraphicsPipeline* glow = nullptr) {
+                 std::initializer_list<Layer> layers, SDL_GPUGraphicsPipeline* glow = nullptr,
+                 const std::vector<SpriteBatch>* batches = nullptr, std::optional<Vec2> size = {},
+                 bool linear = Linear) {
     if (Instances.empty() || !SpriteBuffer.Buffer) return;
     SDL_BindGPUVertexStorageBuffers(pass, 0, &SpriteBuffer.Buffer, 1);
     SDL_GPUGraphicsPipeline* bound = nullptr;
-    for (const SpriteBatch& batch : Batches) {
+    // Sprites are placed in logical pixels, whatever the target's size.
+    const Vec2 logical = size ? *size : Screen::Size();
+    for (const SpriteBatch& batch : batches ? *batches : Batches) {
         if (std::find(layers.begin(), layers.end(), batch.Where) == layers.end()) continue;
         SDL_GPUTexture* texture = GpuTexture(*batch.Source.Internal());
         if (!texture) continue;
@@ -348,14 +381,13 @@ void DrawBatches(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, SDL_GP
             count = 2;
         }
         SDL_BindGPUFragmentSamplers(pass, 0, bindings, count);
-        const Vec2 logical = Screen::Size(); // sprites are placed in logical pixels, whatever the target's size
         SpriteUniforms uniforms{logical.X,
                                 logical.Y,
                                 float(batch.First),
                                 0,
                                 float(batch.Source.Width()),
                                 float(batch.Source.Height()),
-                                Linear ? 1.0f : 0.0f,
+                                linear ? 1.0f : 0.0f,
                                 0};
         SDL_PushGPUVertexUniformData(commands, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 6, batch.Count, 0, 0);
@@ -381,6 +413,45 @@ void Fullscreen(SDL_GPURenderPass* pass, SDL_GPUGraphicsPipeline* pipeline,
     SDL_BindGPUGraphicsPipeline(pass, pipeline);
     if (samplers.size()) SDL_BindGPUFragmentSamplers(pass, 0, samplers.begin(), Uint32(samplers.size()));
     SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+}
+
+// What the RenderTextures got this frame, into them, before the screen uses them.
+void DrawTargets(SDL_GPUCommandBuffer* commands) {
+    for (const TargetDraw& target : TargetDraws()) {
+        SDL_GPUTexture* texture = GpuTexture(*target.Target.Internal());
+        if (!texture) continue;
+        // The values go in as they are (sRGB), like a texture loaded from a file.
+        SDL_GPURenderPass* pass = BeginPass(
+            commands, {texture}, target.Clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD, target.ClearColor);
+        DrawBatches(commands, pass, Pipeline.Texture, AllLayers, Pipeline.TextureGlow, &target.Batches,
+                    target.Target.Size(), false);
+        SDL_EndGPURenderPass(pass);
+    }
+}
+
+// The fades and wipes over the screen target, each one clipped to its area.
+void DrawFills(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass) {
+    SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
+    const Vec2 logical = Screen::Size();
+    const float sx = logical.X > 0 ? float(ScreenWidth) / logical.X : 1.0f;
+    const float sy = logical.Y > 0 ? float(ScreenHeight) / logical.Y : 1.0f;
+    for (const Fill& fill : Fills) {
+        SDL_Rect clip{0, 0, int(ScreenWidth), int(ScreenHeight)};
+        if (!fill.Whole) {
+            const int left = int(std::clamp(std::lround(fill.Area.X * sx), 0L, long(ScreenWidth)));
+            const int top = int(std::clamp(std::lround(fill.Area.Y * sy), 0L, long(ScreenHeight)));
+            const int right = int(std::clamp(std::lround(fill.Area.Right() * sx), 0L, long(ScreenWidth)));
+            const int bottom = int(std::clamp(std::lround(fill.Area.Bottom() * sy), 0L, long(ScreenHeight)));
+            if (right <= left || bottom <= top) continue;
+            clip = {left, top, right - left, bottom - top};
+        }
+        SDL_SetGPUScissor(pass, &clip);
+        const Color color = ToLinear(fill.Tint);
+        SDL_PushGPUFragmentUniformData(commands, 0, &color, sizeof(Color));
+        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+    }
+    SDL_Rect whole{0, 0, int(ScreenWidth), int(ScreenHeight)};
+    SDL_SetGPUScissor(pass, &whole);
 }
 
 void DrawScene(SDL_GPUCommandBuffer* commands) {
@@ -468,12 +539,7 @@ void DrawScene(SDL_GPUCommandBuffer* commands) {
     Fullscreen(pass, Pipeline.Composite, {{SceneTarget.Texture, NearestSampler}, {BloomA.Texture, LinearSampler}});
     DrawBatches(commands, pass, Pipeline.Hud, {Layer::Hud});
     if (!Fills.empty()) {
-        SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
-        for (const Color& fill : Fills) {
-            const Color color = ToLinear(fill);
-            SDL_PushGPUFragmentUniformData(commands, 0, &color, sizeof(Color));
-            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
-        }
+        DrawFills(commands, pass);
     }
     SDL_EndGPURenderPass(pass);
 }
@@ -491,16 +557,55 @@ void DrawCustom(SDL_GPUCommandBuffer* commands) {
     RenderCustom(commands, screen);
     if (Fills.empty()) return;
     SDL_GPURenderPass* pass = BeginPass(commands, {ScreenTarget.Texture}, SDL_GPU_LOADOP_LOAD);
-    SDL_BindGPUGraphicsPipeline(pass, Pipeline.Fill);
-    for (const Color& fill : Fills) {
-        const Color color = ToLinear(fill);
-        SDL_PushGPUFragmentUniformData(commands, 0, &color, sizeof(Color));
-        SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
-    }
+    DrawFills(commands, pass);
     SDL_EndGPURenderPass(pass);
 }
 
-// Scales the screen target into the window, black around it.
+// Keeps this frame's screen for a Transition::Slide (the old scene it pushes away).
+void KeepForSlide(SDL_GPUCommandBuffer* commands) {
+    if (!Prepare(SlideTarget, ScreenFormat, ScreenWidth, ScreenHeight)) return;
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(commands);
+    SDL_GPUTextureLocation source{};
+    source.texture = ScreenTarget.Texture;
+    SDL_GPUTextureLocation destination{};
+    destination.texture = SlideTarget.Texture;
+    SDL_CopyGPUTextureToTexture(copy, &source, &destination, ScreenWidth, ScreenHeight, 1, false);
+    SDL_EndGPUCopyPass(copy);
+}
+
+// Part of a target into part of the window: [from, from + size) of the source along the slide's axis.
+bool BlitPart(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* source, SDL_GPUTexture* swapchain, const Rect& view,
+              bool across, float sourceFrom, float sourceSize, float viewFrom, float viewSize, bool clear) {
+    if (sourceSize < 1 || viewSize < 1) return false;
+    SDL_GPUBlitInfo blit{};
+    blit.source.texture = source;
+    blit.source.w = ScreenWidth;
+    blit.source.h = ScreenHeight;
+    blit.destination.texture = swapchain;
+    blit.destination.x = Uint32(std::max(0L, std::lround(view.X)));
+    blit.destination.y = Uint32(std::max(0L, std::lround(view.Y)));
+    blit.destination.w = Uint32(std::max(1L, std::lround(view.Width)));
+    blit.destination.h = Uint32(std::max(1L, std::lround(view.Height)));
+    if (across) {
+        blit.source.x = Uint32(std::lround(sourceFrom));
+        blit.source.w = Uint32(std::lround(sourceSize));
+        blit.destination.x = Uint32(std::max(0L, std::lround(view.X + viewFrom)));
+        blit.destination.w = Uint32(std::max(1L, std::lround(viewSize)));
+    } else {
+        blit.source.y = Uint32(std::lround(sourceFrom));
+        blit.source.h = Uint32(std::lround(sourceSize));
+        blit.destination.y = Uint32(std::max(0L, std::lround(view.Y + viewFrom)));
+        blit.destination.h = Uint32(std::max(1L, std::lround(viewSize)));
+    }
+    blit.load_op = clear ? SDL_GPU_LOADOP_CLEAR : SDL_GPU_LOADOP_LOAD;
+    blit.clear_color = {0, 0, 0, 1};
+    blit.filter = SDL_GPU_FILTER_NEAREST;
+    SDL_BlitGPUTexture(commands, &blit);
+    return true;
+}
+
+// Scales the screen target into the window, black around it. During a Transition::Slide the new frame and
+// the held old one go side by side, moved by the slide.
 void Present(SDL_GPUCommandBuffer* commands) {
     SDL_GPUTexture* swapchain = nullptr;
     Uint32 width = 0, height = 0;
@@ -510,19 +615,29 @@ void Present(SDL_GPUCommandBuffer* commands) {
     }
     if (!swapchain) return; // minimised or not ready: nothing to show this frame
     Rect view = ViewportFor({float(width), float(height)});
-    SDL_GPUBlitInfo blit{};
-    blit.source.texture = ScreenTarget.Texture;
-    blit.source.w = ScreenWidth;
-    blit.source.h = ScreenHeight;
-    blit.destination.texture = swapchain;
-    blit.destination.x = Uint32(std::max(0L, std::lround(view.X)));
-    blit.destination.y = Uint32(std::max(0L, std::lround(view.Y)));
-    blit.destination.w = Uint32(std::max(1L, std::lround(view.Width)));
-    blit.destination.h = Uint32(std::max(1L, std::lround(view.Height)));
-    blit.load_op = SDL_GPU_LOADOP_CLEAR;
-    blit.clear_color = {0, 0, 0, 1};
-    blit.filter = SDL_GPU_FILTER_NEAREST;
-    SDL_BlitGPUTexture(commands, &blit);
+    float progress = 0;
+    int towards = 0;
+    const bool slide = SceneSlide(progress, towards) && SlideTarget.Texture && SlideTarget.Width == ScreenWidth &&
+                       SlideTarget.Height == ScreenHeight;
+    if (!slide) {
+        BlitPart(commands, ScreenTarget.Texture, swapchain, view, true, 0, float(ScreenWidth), 0, view.Width, true);
+    } else {
+        // Along the slide's axis: the target's size and the window's.
+        const bool across = towards == Transition::Left || towards == Transition::Right;
+        const float size = across ? float(ScreenWidth) : float(ScreenHeight);
+        const float room = across ? view.Width : view.Height;
+        const float shown = size * progress, gone = room * progress;
+        if (towards == Transition::Left || towards == Transition::Up) {
+            // The old one leaves by the start, the new one comes in from the end.
+            const bool old = BlitPart(commands, SlideTarget.Texture, swapchain, view, across, shown, size - shown, 0,
+                                      room - gone, true);
+            BlitPart(commands, ScreenTarget.Texture, swapchain, view, across, 0, shown, room - gone, gone, !old);
+        } else {
+            const bool old = BlitPart(commands, SlideTarget.Texture, swapchain, view, across, 0, size - shown, gone,
+                                      room - gone, true);
+            BlitPart(commands, ScreenTarget.Texture, swapchain, view, across, size - shown, shown, 0, gone, !old);
+        }
+    }
     RenderDebugPanel(commands, swapchain);
 }
 
@@ -626,7 +741,7 @@ void StopRenderer() {
     FlatNormals = {};
     ReleaseTextures();
     ReleaseGpuObjects();
-    for (Target* target : {&ScreenTarget, &AlbedoTarget, &NormalTarget, &SceneTarget, &BloomA, &BloomB})
+    for (Target* target : {&ScreenTarget, &AlbedoTarget, &NormalTarget, &SceneTarget, &BloomA, &BloomB, &SlideTarget})
         Release(*target);
     for (SDL_GPUGraphicsPipeline* pipeline : Pipeline.All())
         if (pipeline) SDL_ReleaseGPUGraphicsPipeline(Device, pipeline);
@@ -662,11 +777,9 @@ SDL_GPUSampler* SamplerFor(Filter filter) { return filter == Filter::Linear ? Li
 
 void DrawSprites2D(SDL_GPUCommandBuffer* commands, SDL_GPURenderPass* pass, bool hdr) {
     if (hdr)
-        DrawBatches(commands, pass, Pipeline.Scene,
-                    {Layer::Background, Layer::World, Layer::Glow, Layer::Overlay, Layer::Hud}, Pipeline.Glow);
+        DrawBatches(commands, pass, Pipeline.Scene, AllLayers, Pipeline.Glow);
     else
-        DrawBatches(commands, pass, Pipeline.Hud,
-                    {Layer::Background, Layer::World, Layer::Glow, Layer::Overlay, Layer::Hud}, Pipeline.HudGlow);
+        DrawBatches(commands, pass, Pipeline.Hud, AllLayers, Pipeline.HudGlow);
 }
 
 void SetRendererVSync(bool vsync) {
@@ -689,16 +802,23 @@ void EndFrame2D() {
         return;
     }
     SDL_GPUTransferBuffer* download = nullptr;
+    if (InTargetDraw()) {
+        Log::Warn("RenderTexture::Begin without its End this frame");
+        EndTargetDraw();
+    }
     if (PrepareTargets()) {
         Upload(commands);
+        DrawTargets(commands);
         if (ActiveRenderer())
             DrawCustom(commands);
         else
             DrawScene(commands);
         if (!ScreenshotPath.empty()) download = StartDownload(commands);
+        if (SceneSnapshotWanted()) KeepForSlide(commands);
         Present(commands);
     }
     SpriteQueue().clear(); // the instances are on the GPU now; drop the texture references
+    TargetDraws().clear();
     Batches.clear();
     if (!download) {
         SDL_SubmitGPUCommandBuffer(commands);
@@ -718,6 +838,10 @@ void EndFrame2D() {
 }
 
 void ClearScreen(Color color) {
+    if (InTargetDraw()) { // inside a RenderTexture: that one is cleared
+        ClearTargetDraw(color);
+        return;
+    }
     // Covers everything drawn before it, so what was queued is simply dropped.
     ClearColor = color;
     Fills.clear();
@@ -726,7 +850,11 @@ void ClearScreen(Color color) {
 }
 
 void FillScreen(Color color) {
-    if (color.A > 0) Fills.push_back(color);
+    if (color.A > 0) Fills.push_back({color, true, {}});
+}
+
+void FillArea(const Rect& area, Color color) {
+    if (color.A > 0 && area.Width > 0 && area.Height > 0) Fills.push_back({color, false, area});
 }
 
 void RequestScreenshot(const std::filesystem::path& path) {

@@ -256,3 +256,52 @@ TEST(ScenesChangedEvent) {
     CHECK(seen == std::vector<Scene*>({&b, &a}));
     Clean();
 }
+
+TEST(ScenesWipeLikeAFade) {
+    Clean();
+    Scenes::Push(MakeScene<Named>("Title"));
+    Detail::ApplySceneChanges();
+    Scenes::Replace(MakeScene<Named>("Level"), Transition::Wipe(1.0f, Transition::Down));
+    Tick();
+    Calls.clear();
+    Ticks(15);
+    CHECK(Calls.empty());
+    CHECK_NEAR(Detail::SceneFade(), 0.5, 1e-3); // half the screen covered
+    Ticks(15);
+    CHECK(Calls == std::vector<std::string>({"Title.Exit", "Level.Enter"}));
+    Ticks(30);
+    CHECK(!Scenes::InTransition());
+    Clean();
+}
+
+TEST(ScenesSlideAfterOneDrawnFrame) {
+    Clean();
+    Scenes::Push(MakeScene<Named>("Title"));
+    Detail::ApplySceneChanges();
+    Scenes::Replace(MakeScene<Named>("Options"), Transition::Slide(0.5f, Transition::Right));
+    Tick();
+    CHECK(Scenes::InTransition());
+    CHECK(!Detail::SceneSnapshotWanted());
+    Calls.clear();
+    Ticks(3);
+    CHECK(Calls.empty()); // it waits for the old scene to be drawn once
+    Detail::DrawScenes();
+    CHECK(Detail::SceneSnapshotWanted()); // the renderer keeps that frame
+    float progress = -1;
+    int towards = -1;
+    CHECK(!Detail::SceneSlide(progress, towards));
+    Calls.clear();
+    Tick();
+    CHECK(Calls == std::vector<std::string>({"Title.Exit", "Options.Enter"}));
+    CHECK(!Detail::SceneSnapshotWanted());
+    CHECK_NEAR(Detail::SceneFade(), 0.0, 1e-6); // nothing covers the screen
+    Ticks(15);
+    CHECK(Detail::SceneSlide(progress, towards));
+    CHECK_NEAR(progress, 0.5, 1e-3); // half way, eased
+    CHECK_EQ(towards, int(Transition::Right));
+    Calls.clear();
+    Ticks(15);
+    CHECK(!Scenes::InTransition());
+    CHECK(!Detail::SceneSlide(progress, towards));
+    Clean();
+}
