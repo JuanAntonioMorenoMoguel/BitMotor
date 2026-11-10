@@ -88,6 +88,14 @@ struct UiState {
         int Caret = 0;    // in characters
         double Since = 0; // the caret blinks from here
     } Edit;
+    // The popup of a widget made in another file (UI::JFxStyle menus): like the open Dropdown, it takes every
+    // click and the navigation until it closes.
+    struct {
+        bool Open = false, Seen = false, Used = false;
+        bool Capture = false; // it was open when the frame started
+        Detail::PopupInput Input;
+    } Pop;
+    std::vector<std::function<void()>> DrawLast;
     // The navigation the open Dropdown or the edited TextField gets instead of the rest.
     std::array<bool, NavCount> Captured{};
 
@@ -282,7 +290,10 @@ void BeginUi() {
     Ui.Drop.Click = false;
     Ui.Drop.Capture = Ui.Drop.Open;
     Ui.Drop.Seen = Ui.Edit.Seen = false;
-    const bool captured = Ui.Drop.Open || Ui.Edit.Active;
+    Ui.Pop.Input = {};
+    Ui.Pop.Capture = Ui.Pop.Open;
+    Ui.Pop.Seen = Ui.Pop.Used = false;
+    const bool captured = Ui.Drop.Open || Ui.Edit.Active || Ui.Pop.Open;
     if (captured) {
         Ui.Captured = Ui.Fired;
         Ui.Fired = {};
@@ -291,6 +302,12 @@ void BeginUi() {
             Ui.ClickTaken = true;
         }
         Ui.RightClickTaken = Ui.Drop.Open;
+        if (Ui.Pop.Open) {
+            Ui.Pop.Input.Click = Ui.Click;
+            Ui.Pop.Input.RightClick = Ui.RightClick;
+            for (int n = 0; n < NavCount; ++n) Ui.Pop.Input.Nav[n] = Ui.Captured[std::size_t(n)];
+            Ui.ClickTaken = Ui.RightClickTaken = true;
+        }
     }
 
     // The focus moves among last frame's widgets of the scope that has the input.
@@ -330,6 +347,11 @@ void EndUi() {
         SetTextInput(false);
     }
     if (Ui.Drop.Open) DrawDropList();
+    // A popup nobody kept this frame, or one clicked outside, closes.
+    const bool clickedOutside = (Ui.Pop.Input.Click || Ui.Pop.Input.RightClick) && !Ui.Pop.Used;
+    if (Ui.Pop.Open && (!Ui.Pop.Seen || clickedOutside)) Ui.Pop.Open = false;
+    for (const std::function<void()>& draw : Ui.DrawLast) draw();
+    Ui.DrawLast.clear();
     if (Ui.ModalNow && !Ui.ModalLast) Ui.Modal.Focus = 0; // a window that just opened starts at its first widget
     Ui.ModalLast = Ui.ModalNow;
     for (Scope* s : {&Ui.Screen, &Ui.Modal}) {
@@ -340,7 +362,7 @@ void EndUi() {
 
     if (Ui.Tip.empty()) return;
     const UI::Theme& look = Ui.Look;
-    TextStyle style = Style(look.Text.Color);
+    TextStyle style = Style(look.TooltipText.A > 0 ? look.TooltipText : look.Text.Color);
     if (look.TooltipLineHeight > 0) style.LineHeight = look.TooltipLineHeight;
     Vec2 size = Text::Measure(Ui.Tip, style, look.TooltipWidth);
     Rect box(Ui.TipAt + (Ui.TipBelow ? Vec2(0, 2) : look.TooltipOffset),
@@ -355,6 +377,46 @@ void EndUi() {
 
 void ResetUi() { Ui = UiState{}; }
 
+WidgetInput Interact(Rect area, bool enabled, bool adjustable) {
+    WidgetInput in;
+    if (!enabled) {
+        Swallow(area);
+        return in;
+    }
+    in.Index = Register(adjustable, in.Focused);
+    in.Hovered = UI::Hovered(area);
+    Hover(in.Index, in.Hovered);
+    if (in.Hovered) in.Focused = Live() && in.Index == Current().Focus;
+    in.Pressed = UI::Clicked(area) || (in.Focused && Ui.Confirm);
+    in.ShowFocus = in.Focused && Ui.ShowFocus;
+    in.Down = in.Hovered && Ui.MouseDown;
+    if (in.Focused) in.Adjust = Ui.Adjust;
+    return in;
+}
+
+bool NextFocused() { return Live() && Current().Count == Current().Focus; }
+
+bool NextEditing() { return Ui.Edit.Active && Ui.Edit.Index == Current().Count && Ui.Edit.InModal == Ui.InModal; }
+
+bool ShowingFocus() { return Ui.ShowFocus; }
+Vec2 UiMouse() { return Ui.Mouse; }
+bool UiMouseDown() { return Ui.MouseDown; }
+bool UiMouseMoved() { return Ui.MouseMoved; }
+void FireClick() { Fire(); }
+void RememberWidget(Rect area, bool hovered, bool focused) { Remember(area, hovered, focused); }
+
+void OpenPopup() {
+    Ui.Pop.Open = Ui.Pop.Seen = true;
+    Ui.Pop.Used = true; // the click that opened it
+}
+
+void KeepPopup() { Ui.Pop.Seen = true; }
+void ClosePopup() { Ui.Pop.Open = false; }
+bool PopupOpen() { return Ui.Pop.Open; }
+const PopupInput& Popup() { return Ui.Pop.Input; }
+void UsePopupClick() { Ui.Pop.Used = true; }
+void DrawLast(std::function<void()> draw) { Ui.DrawLast.push_back(std::move(draw)); }
+
 } // namespace Detail
 
 namespace UI {
@@ -362,7 +424,7 @@ namespace UI {
 void SetTheme(const Theme& theme) { Ui.Look = theme; }
 const Theme& GetTheme() { return Ui.Look; }
 
-bool Hovered(BitMotor::Rect area) { return Live() && !Ui.Drop.Capture && area.Contains(Ui.Mouse); }
+bool Hovered(BitMotor::Rect area) { return Live() && !Ui.Drop.Capture && !Ui.Pop.Capture && area.Contains(Ui.Mouse); }
 
 bool Clicked(BitMotor::Rect area) {
     if (!Ui.Click || Ui.ClickTaken || !Hovered(area)) return false;
@@ -896,8 +958,10 @@ bool TextField(BitMotor::Rect area, std::string_view label, std::string& text, c
         Label({area.X, area.Y, area.Width * 0.5f, area.Height}, label, style.Color, Align::Left);
     }
     BitMotor::Rect field = label.empty() ? box : box.Expand(-1);
-    UI::Rect(field, look.BarBack);
-    UI::RectOutline(field, active || (focused && Ui.ShowFocus) ? look.Accent : lit ? look.Text.Color : look.Border);
+    if (options.Frame) {
+        UI::Rect(field, look.BarBack);
+        UI::RectOutline(field, active || (focused && Ui.ShowFocus) ? look.Accent : lit ? look.Text.Color : look.Border);
+    }
 
     const float y = std::floor(field.Y + field.Height * 0.5f - std::floor((CapHeight(style) - 1) * 0.5f));
     letters = Detail::Decode(text);

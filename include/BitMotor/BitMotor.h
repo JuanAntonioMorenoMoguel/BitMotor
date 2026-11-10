@@ -52,5 +52,6 @@
 #include "BitMotor/Text/Language.h"
 #include "BitMotor/Text/Text.h"
 
+#include "BitMotor/UI/JFxStyle.h"
 #include "BitMotor/UI/Shapes.h"
 #include "BitMotor/UI/UI.h"
