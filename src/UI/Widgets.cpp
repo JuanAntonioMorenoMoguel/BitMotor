@@ -4,6 +4,7 @@
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Math/Functions.h"
 #include "Core/InputInternal.h"
+#include "Render/SpritesInternal.h"
 #include "Text/FontInternal.h"
 #include "UI/UiInternal.h"
 
@@ -112,6 +113,12 @@ Scope& Current() { return Ui.InModal ? Ui.Modal : Ui.Screen; }
 // Widgets react only in the scope that has the input: the modal window while there is one.
 bool Live() { return !Ui.Blocked && Ui.InModal == Ui.ModalLast; }
 
+// Outside the clip in force (Screen::PushClip) the widgets do not see the mouse.
+bool InClip(Vec2 point) {
+    const std::optional<Rect> clip = Screen::Clip();
+    return !clip || clip->Contains(point);
+}
+
 TextStyle Style(Color color) {
     TextStyle style = Ui.Look.Text;
     style.Color = color;
@@ -184,7 +191,7 @@ int Register(bool adjustable, bool& focused) {
 
 // A disabled widget still takes the click, so it does not fall through to what is under it.
 void Swallow(BitMotor::Rect area) {
-    if (Ui.Click && !Ui.ClickTaken && Live() && area.Contains(Ui.Mouse)) Ui.ClickTaken = true;
+    if (Ui.Click && !Ui.ClickTaken && Live() && area.Contains(Ui.Mouse) && InClip(Ui.Mouse)) Ui.ClickTaken = true;
 }
 
 // The mouse moving onto a widget gives it the focus.
@@ -350,8 +357,11 @@ void EndUi() {
     // A popup nobody kept this frame, or one clicked outside, closes.
     const bool clickedOutside = (Ui.Pop.Input.Click || Ui.Pop.Input.RightClick) && !Ui.Pop.Used;
     if (Ui.Pop.Open && (!Ui.Pop.Seen || clickedOutside)) Ui.Pop.Open = false;
+    // Popups over everything: no Screen::PushClip cuts them.
+    std::vector<Rect> clips = TakeClips();
     for (const std::function<void()>& draw : Ui.DrawLast) draw();
     Ui.DrawLast.clear();
+    RestoreClips(std::move(clips));
     if (Ui.ModalNow && !Ui.ModalLast) Ui.Modal.Focus = 0; // a window that just opened starts at its first widget
     Ui.ModalLast = Ui.ModalNow;
     for (Scope* s : {&Ui.Screen, &Ui.Modal}) {
@@ -424,7 +434,9 @@ namespace UI {
 void SetTheme(const Theme& theme) { Ui.Look = theme; }
 const Theme& GetTheme() { return Ui.Look; }
 
-bool Hovered(BitMotor::Rect area) { return Live() && !Ui.Drop.Capture && !Ui.Pop.Capture && area.Contains(Ui.Mouse); }
+bool Hovered(BitMotor::Rect area) {
+    return Live() && !Ui.Drop.Capture && !Ui.Pop.Capture && area.Contains(Ui.Mouse) && InClip(Ui.Mouse);
+}
 
 bool Clicked(BitMotor::Rect area) {
     if (!Ui.Click || Ui.ClickTaken || !Hovered(area)) return false;

@@ -2,7 +2,9 @@
 // and modal windows (UiInternal.h), and every shape is made of the white pixel, like UI::Rect.
 #include "BitMotor/UI/JFxStyle.h"
 
+#include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
+#include "BitMotor/Core/Time.h"
 #include "BitMotor/Math/Functions.h"
 #include "Core/InputInternal.h"
 #include "Text/FontInternal.h"
@@ -11,7 +13,12 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <format>
+#include <functional>
+#include <optional>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace BitMotor::UI::JFxStyle {
@@ -208,25 +215,30 @@ void ReleaseDrag() {
 // ---------------------------------------------------------------- popups
 
 struct Entry {
-    enum Kind { Item, CheckItem, Line } Type = Item;
+    enum Kind { Item, CheckItem, SubItem, Line } Type = Item;
     std::string Label, Shortcut;
     bool Enabled = true, Checked = false, Hot = false;
     float Y = 0, Height = 0; // from the top of the popup
+    int Number = -1;         // its number among the rows that can be chosen (-1: a line)
 };
 
-struct MenuState {
-    bool Open = false;
-    std::uint64_t Owner = 0;
+// One popup box: the open menu, or the submenu beside it.
+struct PopupLevel {
     Vec2 At;            // top-left corner of the popup
     float MinWidth = 0; // a combo box's list is as wide as the box
     float Width = 0;    // last frame's, for the mouse
     int Hot = -1;       // the item under the mouse or chosen with Up/Down
     int Items = 0, LastItems = 0;
-    bool Chosen = false;
     bool HasChecks = false;
     std::vector<Entry> Entries;
     float NextY = 0;
     float LabelWidth = 0, ShortcutWidth = 0;
+};
+
+struct MenuState : PopupLevel {
+    bool Open = false;
+    std::uint64_t Owner = 0;
+    bool Chosen = false;
     // The menu bar being drawn and the bar menu that is open.
     bool InBar = false;
     BitMotor::Rect Bar;
@@ -234,15 +246,32 @@ struct MenuState {
     int BarIndex = 0, BarCount = 0;
     int OpenOrdinal = -1; // which bar menu is open (-1: the popup is not a bar menu)
     int SwitchTo = -1;    // Left/Right asked for this bar menu
+    // The submenu (one level): the item whose submenu is open (-1: none), whether Up/Down/Confirm are for
+    // it, whether it was given this frame, and its drawing, done right after the menu's.
+    PopupLevel Sub;
+    int SubOwner = -1;
+    bool SubFocus = false, SubBuilt = false;
+    bool HotIsSub = false; // last frame, the hot item opened a submenu (Right is for it, not the menu bar)
+    bool NavUsed = false;  // Left or Escape closed the submenu: they do nothing else
+    std::function<void()> SubDraw;
 } Menus;
 
+// The popup that MenuItem and the others add to now.
+PopupLevel* Level = &Menus;
+
 float PopupPad() { return std::round(Max(2.0f, Current.Padding * 0.5f)); }
+
+void CloseSub() {
+    Menus.SubOwner = -1;
+    Menus.SubFocus = false;
+}
 
 // The UI closes the popup on a click outside, or when a frame does not keep it.
 bool IsOpen(std::uint64_t id) {
     if (Menus.Open && !Detail::PopupOpen()) {
         Menus.Open = false;
         Menus.OpenOrdinal = -1;
+        CloseSub();
     }
     return Menus.Open && Menus.Owner == id;
 }
@@ -255,6 +284,7 @@ void OpenMenu(std::uint64_t id, Vec2 at, float minWidth, int hot, int ordinal = 
     Menus.Width = 0;
     Menus.Hot = hot;
     Menus.OpenOrdinal = ordinal;
+    CloseSub();
     Detail::OpenPopup();
     Detail::FireClick();
 }
@@ -262,47 +292,79 @@ void OpenMenu(std::uint64_t id, Vec2 at, float minWidth, int hot, int ordinal = 
 void CloseMenu() {
     Menus.Open = false;
     Menus.OpenOrdinal = -1;
+    CloseSub();
+    Level = &Menus;
     Detail::ClosePopup();
+}
+
+void StartLevel(PopupLevel& level) {
+    level.Entries.clear();
+    level.Items = 0;
+    level.HasChecks = false;
+    level.NextY = PopupPad();
+    level.LabelWidth = level.ShortcutWidth = 0;
+}
+
+void MoveHot(PopupLevel& level, const Detail::PopupInput& in) {
+    const int count = level.LastItems;
+    if (count <= 0) return;
+    if (in.Nav[NavUp]) level.Hot = level.Hot < 0 ? count - 1 : (level.Hot + count - 1) % count;
+    if (in.Nav[NavDown]) level.Hot = (level.Hot + 1) % count;
 }
 
 void BeginPopup() {
     Detail::KeepPopup();
-    Menus.Entries.clear();
-    Menus.Items = 0;
+    StartLevel(Menus);
+    Level = &Menus;
     Menus.Chosen = false;
-    Menus.HasChecks = false;
-    Menus.NextY = PopupPad();
-    Menus.LabelWidth = Menus.ShortcutWidth = 0;
+    Menus.SubBuilt = false;
+    Menus.NavUsed = false;
+    Menus.SubDraw = nullptr;
     const Detail::PopupInput& in = Detail::Popup();
-    const int count = Menus.LastItems;
-    if (count > 0) {
-        if (in.Nav[NavUp]) Menus.Hot = Menus.Hot < 0 ? count - 1 : (Menus.Hot + count - 1) % count;
-        if (in.Nav[NavDown]) Menus.Hot = (Menus.Hot + 1) % count;
+    if (Menus.SubFocus && Menus.SubOwner >= 0) {
+        // Up/Down are the submenu's; Left and Escape go back to the menu.
+        if (in.Nav[NavLeft] || in.Nav[NavBack]) {
+            CloseSub();
+            Menus.NavUsed = true;
+        }
+        return;
     }
-    // In a menu bar, Left and Right go to the menu beside it.
-    if (Menus.OpenOrdinal >= 0 && Menus.BarCount > 0 && (in.Nav[NavLeft] || in.Nav[NavRight]))
+    MoveHot(Menus, in);
+    // In a menu bar, Left and Right go to the menu beside it (Right opens a submenu instead, if there is one).
+    const bool right = in.Nav[NavRight] && !Menus.HotIsSub;
+    if (Menus.OpenOrdinal >= 0 && Menus.BarCount > 0 && (in.Nav[NavLeft] || right))
         Menus.SwitchTo = (Menus.OpenOrdinal + (in.Nav[NavLeft] ? -1 : 1) + Menus.BarCount) % Menus.BarCount;
 }
 
+// Whether the keyboard is on this level now.
+bool KeyboardHere(const PopupLevel& level) { return (&level == &Menus.Sub) == Menus.SubFocus; }
+
 bool PopupRow(Entry::Kind type, std::string_view label, std::string_view shortcut, bool enabled, bool checked) {
+    PopupLevel& level = *Level;
     const float row = RowHeight();
-    const int item = Menus.Items++;
-    const BitMotor::Rect area(Menus.At.X, Menus.At.Y + Menus.NextY, Menus.Width, row);
+    const int item = level.Items++;
+    const BitMotor::Rect area(level.At.X, level.At.Y + level.NextY, level.Width, row);
     const Vec2 mouse = Detail::UiMouse();
     const Detail::PopupInput& in = Detail::Popup();
-    if (Detail::UiMouseMoved() && area.Contains(mouse)) Menus.Hot = enabled ? item : -1;
+    if (Detail::UiMouseMoved() && area.Contains(mouse)) {
+        level.Hot = enabled ? item : -1;
+        if (&level == &Menus)
+            CloseSub();
+        else
+            Menus.SubFocus = true;
+    }
     bool chosen = false;
     if (in.Click && area.Contains(mouse)) {
         Detail::UsePopupClick();
         chosen = enabled;
     }
-    if (in.Nav[NavConfirm] && Menus.Hot == item && enabled) chosen = true;
-    Menus.LabelWidth = Max(Menus.LabelWidth, TextWidth(label));
-    Menus.ShortcutWidth = Max(Menus.ShortcutWidth, TextWidth(shortcut));
-    Menus.HasChecks = Menus.HasChecks || type == Entry::CheckItem;
-    Menus.Entries.push_back(
-        {type, std::string(label), std::string(shortcut), enabled, checked, Menus.Hot == item, Menus.NextY, row});
-    Menus.NextY += row;
+    if (in.Nav[NavConfirm] && level.Hot == item && enabled && KeyboardHere(level)) chosen = true;
+    level.LabelWidth = Max(level.LabelWidth, TextWidth(label));
+    level.ShortcutWidth = Max(level.ShortcutWidth, TextWidth(shortcut));
+    level.HasChecks = level.HasChecks || type == Entry::CheckItem;
+    level.Entries.push_back(
+        {type, std::string(label), std::string(shortcut), enabled, checked, level.Hot == item, level.NextY, row, item});
+    level.NextY += row;
     if (chosen) {
         Menus.Chosen = true;
         Detail::FireClick();
@@ -310,52 +372,97 @@ bool PopupRow(Entry::Kind type, std::string_view label, std::string_view shortcu
     return chosen;
 }
 
+// The size of a popup from its rows, kept inside the screen. `beside`: a submenu's parent box, to go to its
+// left when there is no room on the right.
+BitMotor::Rect PlacePopup(PopupLevel& level, const BitMotor::Rect* beside = nullptr) {
+    const float pad = Current.Padding, check = level.HasChecks ? std::round(CapHeight() + 6) : 0.0f;
+    const float arrows =
+        std::any_of(level.Entries.begin(), level.Entries.end(), [](const Entry& e) { return e.Type == Entry::SubItem; })
+            ? pad * 2
+            : 0.0f;
+    const float width = std::round(
+        Max(level.MinWidth, pad + check + level.LabelWidth +
+                                (level.ShortcutWidth > 0 ? pad * 3 + level.ShortcutWidth : 0) + arrows + pad * 2));
+    const float height = level.NextY + PopupPad();
+    if (Screen::Width() > 0) {
+        if (beside && level.At.X + width > Screen::Width()) level.At.X = beside->X - width + 1;
+        level.At.X = Max(0.0f, Min(level.At.X, Screen::Width() - width));
+    }
+    if (Screen::Height() > 0) level.At.Y = Max(0.0f, Min(level.At.Y, Screen::Height() - height));
+    level.Width = width;
+    level.LastItems = level.Items;
+    return {level.At, {width, height}};
+}
+
+// A small triangle pointing right, centred on `center`.
+void ArrowRight(Vec2 center, float height, Color color) {
+    const float half = std::round(height * 0.5f), width = std::round(height * 0.5f);
+    const Vec2 a(std::round(center.X - width * 0.5f), std::round(center.Y) - half);
+    UI::Triangle(a, {a.X + width, a.Y + half}, {a.X, a.Y + 2 * half}, Faded(color));
+}
+
+void DrawPopupBox(const Palette& p, BitMotor::Rect box, bool checks, const std::vector<Entry>& entries) {
+    const Palette saved = Current;
+    Current = p;
+    const float check = checks ? std::round(CapHeight() + 6) : 0.0f;
+    Shadow(box, 0, p.Shadow, p.ShadowSize);
+    FillRounded(box, 0, 0, Derive(p.Base, -0.17f), Derive(p.Base, -0.30f));
+    FillRounded(box.Expand(-1), 0, 0, p.InnerBackground, p.InnerBackground);
+    for (const Entry& e : entries) {
+        const BitMotor::Rect row(box.X + 1, box.Y + e.Y, box.Width - 2, e.Height);
+        if (e.Type == Entry::Line) {
+            UI::Rect({row.X + p.Padding * 0.5f, std::floor(row.Y + row.Height * 0.5f), row.Width - p.Padding, 1},
+                     p.BoxBorder);
+            continue;
+        }
+        const bool hot = e.Hot && e.Enabled;
+        if (hot) FillRounded(row, 0, 0, p.Accent, p.Accent);
+        Opacity = e.Enabled ? 1.0f : p.DisabledOpacity;
+        const Color text = hot ? p.SelectedText : p.TextColor;
+        if (e.Checked) {
+            const float side = std::round(CapHeight() + 2);
+            Check({row.X + p.Padding, std::round(row.Y + (row.Height - side) * 0.5f), side, side},
+                  hot ? p.SelectedText : p.Mark);
+        }
+        DrawText({row.X + p.Padding + check, row.Y, row.Width, row.Height}, e.Label, text, Align::Left, 0);
+        if (e.Type == Entry::SubItem)
+            ArrowRight({row.Right() - p.Padding * 1.5f, row.Center().Y}, std::round(CapHeight() * 0.8f),
+                       hot ? p.SelectedText : p.Mark);
+        else
+            DrawText(row, e.Shortcut, text, Align::Right, p.Padding * 2);
+        Opacity = 1;
+    }
+    Current = saved;
+}
+
 void EndPopup() {
     const Palette p = Current;
-    const float pad = p.Padding, check = Menus.HasChecks ? std::round(CapHeight() + 6) : 0.0f;
-    const float width =
-        std::round(Max(Menus.MinWidth, pad + check + Menus.LabelWidth +
-                                           (Menus.ShortcutWidth > 0 ? pad * 3 + Menus.ShortcutWidth : 0) + pad * 2));
-    const float height = Menus.NextY + PopupPad();
-    // Inside the screen (when there is one).
-    if (Screen::Width() > 0) Menus.At.X = Max(0.0f, Min(Menus.At.X, Screen::Width() - width));
-    if (Screen::Height() > 0) Menus.At.Y = Max(0.0f, Min(Menus.At.Y, Screen::Height() - height));
-    Menus.Width = width;
-    Menus.LastItems = Menus.Items;
-    const BitMotor::Rect box(Menus.At, {width, height});
+    const BitMotor::Rect box = PlacePopup(Menus);
     const Detail::PopupInput& in = Detail::Popup();
     if ((in.Click || in.RightClick) && box.Contains(Detail::UiMouse())) Detail::UsePopupClick();
-    if (in.Nav[NavBack] || Menus.Chosen) CloseMenu();
-    if (!Menus.Open) return;
-
-    Detail::DrawLast([p, box, check, entries = Menus.Entries] {
-        const Palette saved = Current;
-        Current = p;
-        Shadow(box, 0, p.Shadow, p.ShadowSize);
-        FillRounded(box, 0, 0, Derive(p.Base, -0.17f), Derive(p.Base, -0.30f));
-        FillRounded(box.Expand(-1), 0, 0, p.InnerBackground, p.InnerBackground);
-        for (const Entry& e : entries) {
-            const BitMotor::Rect row(box.X + 1, box.Y + e.Y, box.Width - 2, e.Height);
-            if (e.Type == Entry::Line) {
-                UI::Rect({row.X + p.Padding * 0.5f, std::floor(row.Y + row.Height * 0.5f), row.Width - p.Padding, 1},
-                         p.BoxBorder);
-                continue;
-            }
-            const bool hot = e.Hot && e.Enabled;
-            if (hot) FillRounded(row, 0, 0, p.Accent, p.Accent);
-            Opacity = e.Enabled ? 1.0f : p.DisabledOpacity;
-            const Color text = hot ? p.SelectedText : p.TextColor;
-            if (e.Checked) {
-                const float side = std::round(CapHeight() + 2);
-                Check({row.X + p.Padding, std::round(row.Y + (row.Height - side) * 0.5f), side, side},
-                      hot ? p.SelectedText : p.Mark);
-            }
-            DrawText({row.X + p.Padding + check, row.Y, row.Width, row.Height}, e.Label, text, Align::Left, 0);
-            DrawText(row, e.Shortcut, text, Align::Right, p.Padding * 2);
-            Opacity = 1;
-        }
-        Current = saved;
+    if (!Menus.SubBuilt) CloseSub();
+    Menus.HotIsSub = std::any_of(Menus.Entries.begin(), Menus.Entries.end(), [](const Entry& e) {
+        return e.Type == Entry::SubItem && e.Number == Menus.Hot && e.Enabled;
     });
+    if ((in.Nav[NavBack] && !Menus.NavUsed) || Menus.Chosen) CloseMenu();
+    if (!Menus.Open) return;
+    Detail::DrawLast([p, box, checks = Menus.HasChecks, entries = Menus.Entries, sub = Menus.SubDraw] {
+        DrawPopupBox(p, box, checks, entries);
+        if (sub) sub(); // the submenu over its menu
+    });
+}
+
+// The end of a submenu (EndMenu inside BeginSubMenu).
+void EndSubPopup() {
+    PopupLevel& sub = Menus.Sub;
+    const BitMotor::Rect parent(Menus.At, {Menus.Width, Menus.NextY});
+    const BitMotor::Rect box = PlacePopup(sub, &parent);
+    const Detail::PopupInput& in = Detail::Popup();
+    if ((in.Click || in.RightClick) && box.Contains(Detail::UiMouse())) Detail::UsePopupClick();
+    Level = &Menus;
+    Menus.SubDraw = [p = Current, box, checks = sub.HasChecks, entries = sub.Entries] {
+        DrawPopupBox(p, box, checks, entries);
+    };
 }
 
 // ---------------------------------------------------------------- buttons
@@ -942,6 +1049,455 @@ BitMotor::Rect BeginDialog(BitMotor::Rect area, std::string_view title) {
 
 void EndDialog() { UI::EndModal(); }
 
+// ---------------------------------------------------------------- for editors
+
+namespace {
+
+// Where a drag started (Spinner, Knob): the mouse's y and the value then.
+float DragValue = 0;
+
+// A small triangle pointing up, centred on `center`.
+void ArrowUp(Vec2 center, float width, Color color) {
+    const float half = std::round(width * 0.5f), height = std::round(width * 0.5f);
+    const Vec2 a(std::round(center.X) - half, std::round(center.Y + height * 0.5f));
+    UI::Triangle(a, {a.X + half, a.Y - height}, {a.X + 2 * half, a.Y}, Faded(color));
+}
+
+// Turns of the wheel this frame over the area (0 when it is not hovered or the UI does not take the mouse).
+float WheelOver(BitMotor::Rect area) { return UI::Hovered(area) ? Detail::FrameWheel() : 0.0f; }
+
+bool CtrlHeld() { return Detail::FrameDown(Key::LeftCtrl) || Detail::FrameDown(Key::RightCtrl); }
+bool ShiftHeld() { return Detail::FrameDown(Key::LeftShift) || Detail::FrameDown(Key::RightShift); }
+
+template <class T> bool SpinnerOf(BitMotor::Rect area, T& value, T min, T max, T step, int decimals, bool enabled) {
+    Fading fading(enabled);
+    ReleaseDrag();
+    if (max < min) std::swap(min, max);
+    const T before = value;
+    value = Clamp(value, min, max);
+    const std::uint64_t id = Hash("spinner", area);
+    const Detail::WidgetInput in = Detail::Interact(area, enabled, true);
+    const float arrows = std::round(CapHeight() + Current.Padding);
+    const BitMotor::Rect buttons(area.Right() - arrows, area.Y, arrows, area.Height);
+    const BitMotor::Rect up(buttons.X, buttons.Y, buttons.Width, std::floor(buttons.Height * 0.5f));
+    const BitMotor::Rect down(buttons.X, up.Bottom(), buttons.Width, buttons.Height - up.Height);
+    const Vec2 mouse = Detail::UiMouse();
+    auto change = [&](double steps) {
+        value = Clamp(T(double(value) + double(step) * steps), min, max);
+        if constexpr (std::is_floating_point_v<T>)
+            if (step > 0) value = Clamp(T(min + std::round((value - min) / step) * step), min, max);
+    };
+    if (enabled) {
+        if (in.Pressed && in.Hovered) {
+            if (up.Contains(mouse)) {
+                change(1);
+            } else if (down.Contains(mouse)) {
+                change(-1);
+            } else {
+                DragId = id;
+                DragGrab = mouse.Y;
+                DragValue = float(value);
+            }
+        }
+        if (DragId == id && Detail::UiMouseDown()) {
+            value = T(DragValue);
+            change(std::trunc((DragGrab - mouse.Y) / 4)); // a step every 4 pixels
+        }
+        if (const float wheel = WheelOver(area); wheel != 0) change(std::round(wheel));
+        if (in.Adjust != 0) change(in.Adjust);
+    }
+    // A text field with the arrows on its right.
+    FillRounded(area, Current.Radius, Current.Radius, Derive(Current.TextBoxBorder, -0.1f), Current.TextBoxBorder);
+    FillRounded(area.Expand(-1), Current.Radius - 1, Current.Radius - 1, Derive(Current.InnerBackground, -0.09f),
+                Current.InnerBackground);
+    std::string text;
+    if constexpr (std::is_floating_point_v<T>)
+        text = std::format("{:.{}f}", double(value), Max(0, decimals));
+    else
+        text = std::to_string(value);
+    DrawText({area.X, area.Y, area.Width - arrows, area.Height}, text, Current.TextColor, Align::Right,
+             Current.Padding);
+    const bool overUp = in.Hovered && up.Contains(mouse), overDown = in.Hovered && down.Contains(mouse);
+    Body(up.Expand(-1), overUp ? (in.Down ? Current.Pressed : Current.Hover) : Current.Base, Current.Radius, 0);
+    Body(down.Expand(-1), overDown ? (in.Down ? Current.Pressed : Current.Hover) : Current.Base, 0, Current.Radius);
+    const float mark = std::round(CapHeight() * 0.6f);
+    ArrowUp(up.Center(), mark, Current.Mark);
+    Arrow(down.Center(), mark, Current.Mark);
+    if (in.ShowFocus) FocusRing(area, Current.Radius);
+    Detail::RememberWidget(area, in.Hovered, in.Focused);
+    if (value != before) Detail::FireClick();
+    return value != before;
+}
+
+} // namespace
+
+bool Spinner(BitMotor::Rect area, int& value, int min, int max, int step, bool enabled) {
+    return SpinnerOf(area, value, min, max, Max(1, step), 0, enabled);
+}
+
+bool Spinner(BitMotor::Rect area, float& value, float min, float max, float step, int decimals, bool enabled) {
+    return SpinnerOf(area, value, min, max, step > 0 ? step : (max - min) * 0.01f, decimals, enabled);
+}
+
+bool Knob(BitMotor::Rect area, float& value, float min, float max, float step, bool enabled) {
+    return Knob(area, value, min, max, step, min, enabled);
+}
+
+bool Knob(BitMotor::Rect area, float& value, float min, float max, float step, float origin, bool enabled) {
+    Fading fading(enabled);
+    ReleaseDrag();
+    if (max < min) std::swap(min, max);
+    const float before = value;
+    value = Clamp(value, min, max);
+    const std::uint64_t id = Hash("knob", area);
+    const Detail::WidgetInput in = Detail::Interact(area, enabled, true);
+    const Vec2 mouse = Detail::UiMouse();
+    auto snap = [&](float v) {
+        v = Clamp(v, min, max);
+        return step > 0 ? Clamp(min + std::round((v - min) / step) * step, min, max) : v;
+    };
+    if (enabled) {
+        if (in.Pressed && in.Hovered) {
+            DragId = id;
+            DragGrab = mouse.Y;
+            DragValue = value;
+            Detail::FireClick();
+        }
+        // 150 pixels up or down for the whole range.
+        if (DragId == id && Detail::UiMouseDown()) value = snap(DragValue + (DragGrab - mouse.Y) / 150 * (max - min));
+        const float unit = step > 0 ? step : (max - min) * 0.01f;
+        if (const float wheel = WheelOver(area); wheel != 0) value = snap(value + unit * std::round(wheel));
+        if (in.Adjust != 0) value = snap(value + unit * float(in.Adjust));
+    }
+    const float size = std::floor(Min(area.Width, area.Height));
+    const Vec2 center(std::round(area.Center().X), std::round(area.Center().Y));
+    const float ring = size * 0.5f - 1, body = std::round(size * 0.34f);
+    // From the bottom left (t = 0) round the top to the bottom right (t = 1), clockwise on the screen.
+    auto at = [&](float t, float radius) {
+        const float angle = 3.14159265f * (0.75f + 1.5f * t);
+        return center + Vec2(std::cos(angle), std::sin(angle)) * radius;
+    };
+    auto arc = [&](float from, float to, Color color) {
+        if (to < from) std::swap(from, to);
+        const int pieces = Max(1, int(std::ceil((to - from) * 24)));
+        for (int i = 0; i < pieces; ++i)
+            UI::Line(at(from + (to - from) * float(i) / float(pieces), ring - 1),
+                     at(from + (to - from) * float(i + 1) / float(pieces), ring - 1), Faded(color), 2);
+    };
+    const float range = max > min ? max - min : 1.0f;
+    const float t = (value - min) / range, t0 = Clamp((origin - min) / range, 0.0f, 1.0f);
+    arc(0, 1, Current.BoxBorder);
+    arc(t0, t, Current.Accent);
+    const BitMotor::Rect knob(center.X - body, center.Y - body, body * 2, body * 2);
+    ControlBody(knob, DragId == id ? Current.Pressed : in.Hovered ? Current.Hover : Current.Base, body);
+    UI::Line(at(t, body * 0.25f), at(t, body - 2), Faded(Current.Mark), 2);
+    if (in.ShowFocus) FocusRing(knob, body);
+    Detail::RememberWidget(area, in.Hovered, in.Focused);
+    if (value != before) Detail::FireClick();
+    return value != before;
+}
+
+namespace {
+
+struct ScrollState {
+    BitMotor::Rect Area, View, VTrack, HTrack;
+    Vec2 Content;
+    Vec2* Scroll = nullptr;
+    std::uint64_t VId = 0, HId = 0;
+};
+std::vector<ScrollState> Scrolls;
+
+float BarSize() { return std::round(CapHeight() + 5); }
+
+// The thumb of a scroll bar along `track` (vertical when it is taller than wide).
+BitMotor::Rect Thumb(BitMotor::Rect track, float view, float content, float scroll) {
+    const bool vertical = track.Height > track.Width;
+    const float length = vertical ? track.Height : track.Width;
+    const float thumb = Max(BarSize(), std::round(length * Min(1.0f, view / Max(1.0f, content))));
+    const float most = Max(0.0f, content - view);
+    const float at = std::round((length - thumb) * (most > 0 ? scroll / most : 0));
+    return vertical ? BitMotor::Rect(track.X, track.Y + at, track.Width, thumb)
+                    : BitMotor::Rect(track.X + at, track.Y, thumb, track.Height);
+}
+
+} // namespace
+
+Vec2 BeginScrollArea(BitMotor::Rect area, Vec2 content, Vec2& scroll, bool enabled) {
+    ReleaseDrag();
+    ScrollState state;
+    state.Area = area;
+    state.Content = content;
+    state.Scroll = &scroll;
+    state.VId = Hash("scroll-v", area);
+    state.HId = Hash("scroll-h", area);
+    const float bar = BarSize();
+    const BitMotor::Rect inside = area.Expand(-1);
+    bool vertical = content.Y > inside.Height;
+    const bool horizontal = content.X > inside.Width - (vertical ? bar : 0);
+    if (horizontal && !vertical) vertical = content.Y > inside.Height - bar;
+    state.View = {inside.X, inside.Y, inside.Width - (vertical ? bar : 0), inside.Height - (horizontal ? bar : 0)};
+    state.VTrack = vertical ? BitMotor::Rect(state.View.Right(), inside.Y, bar, state.View.Height) : BitMotor::Rect();
+    state.HTrack = horizontal ? BitMotor::Rect(inside.X, state.View.Bottom(), state.View.Width, bar) : BitMotor::Rect();
+    const Vec2 most(Max(0.0f, content.X - state.View.Width), Max(0.0f, content.Y - state.View.Height));
+    const Vec2 mouse = Detail::UiMouse();
+
+    if (enabled) {
+        if (const float wheel = CtrlHeld() ? 0.0f : WheelOver(area); wheel != 0) {
+            const float distance = wheel * RowHeight() * 3;
+            if (ShiftHeld() || (!vertical && horizontal))
+                scroll.X -= distance;
+            else
+                scroll.Y -= distance;
+        }
+        auto grab = [&](const BitMotor::Rect& track, std::uint64_t id, bool isVertical) {
+            if (track.Width <= 0 || !UI::Clicked(track)) return;
+            DragId = id;
+            const BitMotor::Rect thumb = isVertical ? Thumb(track, state.View.Height, content.Y, scroll.Y)
+                                                    : Thumb(track, state.View.Width, content.X, scroll.X);
+            const float m = isVertical ? mouse.Y : mouse.X, start = isVertical ? thumb.Y : thumb.X;
+            const float length = isVertical ? thumb.Height : thumb.Width;
+            DragGrab = m >= start && m < start + length ? m - start : length * 0.5f;
+        };
+        grab(state.VTrack, state.VId, true);
+        grab(state.HTrack, state.HId, false);
+        if (Detail::UiMouseDown()) {
+            if (DragId == state.VId && vertical) {
+                const float thumb = Thumb(state.VTrack, state.View.Height, content.Y, scroll.Y).Height;
+                if (state.VTrack.Height > thumb)
+                    scroll.Y = (mouse.Y - DragGrab - state.VTrack.Y) / (state.VTrack.Height - thumb) * most.Y;
+            }
+            if (DragId == state.HId && horizontal) {
+                const float thumb = Thumb(state.HTrack, state.View.Width, content.X, scroll.X).Width;
+                if (state.HTrack.Width > thumb)
+                    scroll.X = (mouse.X - DragGrab - state.HTrack.X) / (state.HTrack.Width - thumb) * most.X;
+            }
+        }
+    }
+    scroll = {std::round(Clamp(scroll.X, 0.0f, most.X)), std::round(Clamp(scroll.Y, 0.0f, most.Y))};
+
+    FillRounded(area, 0, 0, Current.BoxBorder, Current.BoxBorder);
+    FillRounded(inside, 0, 0, Current.InnerBackground, Current.InnerBackground);
+    Scrolls.push_back(state);
+    Screen::PushClip(state.View);
+    return state.View.Position() - scroll;
+}
+
+void EndScrollArea() {
+    if (Scrolls.empty()) {
+        Log::Warn("Fx::EndScrollArea without a BeginScrollArea");
+        return;
+    }
+    Screen::PopClip();
+    const ScrollState state = Scrolls.back();
+    Scrolls.pop_back();
+    const Vec2 scroll = *state.Scroll;
+    const Color track = Derive(Current.Base, 0.1f);
+    if (state.VTrack.Width > 0) {
+        FillRounded(state.VTrack, 0, 0, track, track);
+        UI::Rect({state.VTrack.X, state.VTrack.Y, 1, state.VTrack.Height}, Faded(Current.BoxBorder));
+        const BitMotor::Rect thumb = Thumb(state.VTrack, state.View.Height, state.Content.Y, scroll.Y);
+        const BitMotor::Rect body(thumb.X + 2, thumb.Y + 1, thumb.Width - 3, thumb.Height - 2);
+        ControlBody(body, DragId == state.VId ? Current.Pressed : Current.Base, body.Width * 0.5f);
+    }
+    if (state.HTrack.Width > 0) {
+        FillRounded(state.HTrack, 0, 0, track, track);
+        UI::Rect({state.HTrack.X, state.HTrack.Y, state.HTrack.Width, 1}, Faded(Current.BoxBorder));
+        const BitMotor::Rect thumb = Thumb(state.HTrack, state.View.Width, state.Content.X, scroll.X);
+        const BitMotor::Rect body(thumb.X + 1, thumb.Y + 2, thumb.Width - 2, thumb.Height - 3);
+        ControlBody(body, DragId == state.HId ? Current.Pressed : Current.Base, body.Height * 0.5f);
+    }
+    if (state.VTrack.Width > 0 && state.HTrack.Width > 0)
+        FillRounded({state.VTrack.X, state.HTrack.Y, state.VTrack.Width, state.HTrack.Height}, 0, 0, track, track);
+}
+
+BitMotor::Rect ScrollView() { return Scrolls.empty() ? BitMotor::Rect() : Scrolls.back().View; }
+
+namespace {
+
+struct GridState {
+    Vec2 Origin;
+    Vec2 Cell;
+};
+std::vector<GridState> Grids;
+// The grid the left button went down on (0: none), and the cell.
+std::uint64_t GridDrag = 0;
+GridPoint GridFrom;
+
+} // namespace
+
+GridInput BeginGrid(BitMotor::Rect area, Grid& grid, bool enabled) {
+    grid.Columns = Max(0, grid.Columns);
+    grid.Rows = Max(0, grid.Rows);
+    const Vec2 cell(Max(1.0f, grid.Cell.X), Max(1.0f, grid.Cell.Y));
+    const Vec2 content(float(grid.Columns) * cell.X, float(grid.Rows) * cell.Y);
+    const Vec2 origin = BeginScrollArea(area, content, grid.Scroll, enabled);
+    const BitMotor::Rect view = ScrollView();
+    const std::uint64_t id = Hash("grid", area);
+    Grids.push_back({origin, cell});
+
+    // The visible columns and rows.
+    const int firstColumn = Max(0, int((view.X - origin.X) / cell.X));
+    const int lastColumn = Min(grid.Columns, int(std::ceil((view.Right() - origin.X) / cell.X)));
+    const int firstRow = Max(0, int((view.Y - origin.Y) / cell.Y));
+    const int lastRow = Min(grid.Rows, int(std::ceil((view.Bottom() - origin.Y) / cell.Y)));
+    const float width = Min(view.Width, content.X - (view.X - origin.X));
+    const float height = Min(view.Height, content.Y - (view.Y - origin.Y));
+    if (grid.BandColumns > 0) {
+        const Color band = Derive(Current.InnerBackground, -0.04f);
+        for (int c = firstColumn - firstColumn % grid.BandColumns; c < lastColumn; c += grid.BandColumns)
+            if ((c / grid.BandColumns) % 2 == 1)
+                UI::Rect({std::round(origin.X + float(c) * cell.X), view.Y, float(grid.BandColumns) * cell.X, height},
+                         Faded(band));
+    }
+    const Color minor = Derive(Current.InnerBackground, -0.08f), major = Derive(Current.BoxBorder, -0.12f);
+    for (int c = Max(1, firstColumn); c <= lastColumn && c < grid.Columns; ++c) {
+        const bool strong = grid.MajorColumns > 0 && c % grid.MajorColumns == 0;
+        UI::Rect({std::round(origin.X + float(c) * cell.X), view.Y, 1, height}, Faded(strong ? major : minor));
+    }
+    for (int r = Max(1, firstRow); r <= lastRow && r < grid.Rows; ++r) {
+        const bool strong = grid.MajorRows > 0 && r % grid.MajorRows == 0;
+        UI::Rect({view.X, std::round(origin.Y + float(r) * cell.Y), width, 1}, Faded(strong ? major : minor));
+    }
+
+    GridInput in;
+    const Vec2 mouse = Detail::UiMouse();
+    auto cellAt = [&](Vec2 p, bool clamp) {
+        GridPoint point{int(std::floor((p.X - origin.X) / cell.X)), int(std::floor((p.Y - origin.Y) / cell.Y))};
+        if (clamp) {
+            point.Column = Clamp(point.Column, 0, grid.Columns - 1);
+            point.Row = Clamp(point.Row, 0, grid.Rows - 1);
+        } else if (point.Column < 0 || point.Row < 0 || point.Column >= grid.Columns || point.Row >= grid.Rows) {
+            return GridPoint{};
+        }
+        return point;
+    };
+    if (!enabled || grid.Columns == 0 || grid.Rows == 0) return in;
+    const bool over = UI::Hovered(view);
+    if (over) in.Hovered = cellAt(mouse, false);
+    if (over && in.Hovered.Valid() && UI::Clicked(view)) {
+        in.Pressed = in.Hovered;
+        GridDrag = id;
+        GridFrom = in.Hovered;
+    }
+    if (over && in.Hovered.Valid() && UI::RightClicked(view)) in.RightPressed = in.Hovered;
+    if (GridDrag == id) {
+        in.Hovered = cellAt(mouse, true); // dragging out of the view keeps to the edge
+        in.DragFrom = GridFrom;
+        if (Detail::UiMouseDown()) {
+            in.Dragging = true;
+        } else {
+            in.Released = true;
+            GridDrag = 0;
+        }
+    }
+    return in;
+}
+
+BitMotor::Rect GridCell(int column, int row) {
+    if (Grids.empty()) return {};
+    const GridState& g = Grids.back();
+    return {std::round(g.Origin.X + float(column) * g.Cell.X), std::round(g.Origin.Y + float(row) * g.Cell.Y),
+            std::round(g.Cell.X), std::round(g.Cell.Y)};
+}
+
+void GridSelection(GridPoint a, GridPoint b) {
+    if (Grids.empty() || !a.Valid() || !b.Valid()) return;
+    const BitMotor::Rect first = GridCell(Min(a.Column, b.Column), Min(a.Row, b.Row));
+    const BitMotor::Rect last = GridCell(Max(a.Column, b.Column), Max(a.Row, b.Row));
+    const BitMotor::Rect box(first.X, first.Y, last.Right() - first.X, last.Bottom() - first.Y);
+    UI::Rect(box, Faded(Current.Accent.WithAlpha(0.22f)));
+    RoundedOutline(box, 0, Current.Accent, 1);
+}
+
+void EndGrid() {
+    if (Grids.empty()) {
+        Log::Warn("Fx::EndGrid without a BeginGrid");
+        return;
+    }
+    Grids.pop_back();
+    EndScrollArea();
+}
+
+namespace {
+
+struct DragState {
+    std::string Payload, Label;
+    std::uint64_t Source = 0;
+    Vec2 From;
+    bool Pending = false, Active = false;
+    bool Dropped = false; // let go this frame: the targets can take it
+    std::uint64_t Seen = 0;
+} Drag;
+
+void ResetDrag(std::uint64_t seen) {
+    Drag = DragState{};
+    Drag.Seen = seen;
+}
+
+// Once a frame: starts the drag after 4 pixels, lets it go when the button is up, and draws its label.
+void UpdateDrag() {
+    const std::uint64_t frame = Time::Frame();
+    if (Drag.Seen == frame) return;
+    Drag.Seen = frame;
+    if (Drag.Dropped) ResetDrag(frame); // nobody took it last frame
+    if (!Drag.Pending && !Drag.Active) return;
+    if (!Detail::UiMouseDown()) {
+        if (Drag.Active)
+            Drag.Dropped = true;
+        else
+            ResetDrag(frame);
+        return;
+    }
+    if (!Drag.Active && LengthSquared(Detail::UiMouse() - Drag.From) >= 16) Drag.Active = true;
+    if (!Drag.Active || Drag.Label.empty()) return;
+    Detail::DrawLast([p = Current, label = Drag.Label, at = Detail::UiMouse()] {
+        const Palette saved = Current;
+        Current = p;
+        const float width = std::round(TextWidth(label) + p.Padding * 2), height = RowHeight();
+        const BitMotor::Rect box(std::round(at.X + 12), std::round(at.Y + 8), width, height);
+        Shadow(box, p.Radius, p.Shadow, p.ShadowSize * 0.5f);
+        FillRounded(box, p.Radius, p.Radius, p.Accent, p.Accent);
+        DrawText(box, label, p.SelectedText, Align::Center, 0);
+        Current = saved;
+    });
+}
+
+} // namespace
+
+bool DragSource(BitMotor::Rect area, std::string_view payload, std::string_view label) {
+    UpdateDrag();
+    const std::uint64_t id = Hash("drag", area, payload);
+    if (!Drag.Pending && !Drag.Active && Detail::FramePressed(MouseButton::Left) && UI::Hovered(area)) {
+        Drag.Pending = true;
+        Drag.Source = id;
+        Drag.Payload = std::string(payload);
+        Drag.Label = std::string(label);
+        Drag.From = Detail::UiMouse();
+    }
+    return Drag.Active && !Drag.Dropped && Drag.Source == id;
+}
+
+bool DropTarget(BitMotor::Rect area, std::string& payload) {
+    UpdateDrag();
+    if (!Drag.Active) return false;
+    const Vec2 mouse = Detail::UiMouse();
+    const std::optional<BitMotor::Rect> clip = Screen::Clip();
+    const bool over = area.Contains(mouse) && (!clip || clip->Contains(mouse)) && !Detail::PopupOpen();
+    if (!over) return false;
+    if (Drag.Dropped) {
+        payload = Drag.Payload;
+        ResetDrag(Drag.Seen);
+        return true;
+    }
+    RoundedOutline(area, Current.Radius, Current.Accent, 2);
+    return false;
+}
+
+std::string_view Dragged() {
+    UpdateDrag();
+    return Drag.Active && !Drag.Dropped ? std::string_view(Drag.Payload) : std::string_view();
+}
+
 // ---------------------------------------------------------------- menus
 
 void BeginMenuBar(BitMotor::Rect area) {
@@ -1002,6 +1558,7 @@ bool BeginContextMenu(BitMotor::Rect area) {
             Detail::UsePopupClick();
             Menus.At = mouse; // right-clicked again: the menu moves there
             Menus.Hot = -1;
+            CloseSub();
         }
     } else if (UI::RightClicked(area)) {
         OpenMenu(id, mouse, 0, -1);
@@ -1019,17 +1576,69 @@ bool CheckMenuItem(std::string_view label, bool& checked, std::string_view short
     const bool chosen = PopupRow(Entry::CheckItem, label, shortcut, enabled, checked);
     if (chosen) {
         checked = !checked;
-        Menus.Entries.back().Checked = checked;
+        Level->Entries.back().Checked = checked;
     }
     return chosen;
 }
 
 void MenuSeparator() {
     const float height = std::round(Max(5.0f, Current.Padding * 0.75f));
-    Menus.Entries.push_back({Entry::Line, {}, {}, false, false, false, Menus.NextY, height});
-    Menus.NextY += height;
+    Level->Entries.push_back({Entry::Line, {}, {}, false, false, false, Level->NextY, height, -1});
+    Level->NextY += height;
 }
 
-void EndMenu() { EndPopup(); }
+bool BeginSubMenu(std::string_view label, bool enabled) {
+    if (Level != &Menus || !Menus.Open) return false; // one level of submenus
+    const float row = RowHeight();
+    const int item = Menus.Items++;
+    const float y = Menus.NextY;
+    const BitMotor::Rect area(Menus.At.X, Menus.At.Y + y, Menus.Width, row);
+    const Vec2 mouse = Detail::UiMouse();
+    const Detail::PopupInput& in = Detail::Popup();
+    if (Detail::UiMouseMoved() && area.Contains(mouse)) {
+        Menus.Hot = enabled ? item : -1;
+        if (enabled && Menus.SubOwner != item) {
+            Menus.SubOwner = item;
+            Menus.SubFocus = false;
+            Menus.Sub.Hot = -1;
+        }
+    }
+    if (in.Click && area.Contains(mouse)) {
+        Detail::UsePopupClick();
+        if (enabled) Menus.SubOwner = item;
+    }
+    if (enabled && !Menus.SubFocus && Menus.Hot == item && (in.Nav[NavRight] || in.Nav[NavConfirm])) {
+        Menus.SubOwner = item;
+        Menus.SubFocus = true;
+        Menus.Sub.Hot = 0;
+    }
+    Menus.LabelWidth = Max(Menus.LabelWidth, TextWidth(label));
+    Menus.Entries.push_back({Entry::SubItem,
+                             std::string(label),
+                             {},
+                             enabled,
+                             false,
+                             Menus.Hot == item || Menus.SubOwner == item,
+                             y,
+                             row,
+                             item});
+    Menus.NextY += row;
+    if (Menus.SubOwner != item) return false;
+
+    PopupLevel& sub = Menus.Sub;
+    StartLevel(sub);
+    sub.At = {std::round(Menus.At.X + Menus.Width - 1), std::round(Menus.At.Y + y - PopupPad())};
+    if (Menus.SubFocus) MoveHot(sub, in);
+    Menus.SubBuilt = true;
+    Level = &sub;
+    return true;
+}
+
+void EndMenu() {
+    if (Level == &Menus.Sub)
+        EndSubPopup();
+    else
+        EndPopup();
+}
 
 } // namespace BitMotor::UI::JFxStyle

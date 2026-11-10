@@ -174,6 +174,77 @@ bool SplitPane(BitMotor::Rect area, float& ratio, BitMotor::Rect& first, BitMoto
 BitMotor::Rect BeginDialog(BitMotor::Rect area, std::string_view title = {});
 void EndDialog();
 
+// ---------------------------------------------------------------- for editors
+
+// A number with two arrows at its right: a click on an arrow, the wheel over it, Left/Right, or dragging up
+// and down change it by `step` within [min, max]. True on the frame it changes.
+//     Fx::Spinner(area, bpm, 20, 400);   Fx::Spinner(area, volume, 0, 1, 0.05f, 2);
+bool Spinner(BitMotor::Rect area, int& value, int min, int max, int step = 1, bool enabled = true);
+// The same for a float, shown with `decimals` digits after the point.
+bool Spinner(BitMotor::Rect area, float& value, float min, float max, float step, int decimals = 2,
+             bool enabled = true);
+// A round knob (pan, filters): dragging up/down, the wheel or Left/Right turn it by `step` within [min, max].
+// The arc shows the value from `origin` (min by default; 0 for a pan knob from -1 to 1). True while it changes.
+bool Knob(BitMotor::Rect area, float& value, float min = 0, float max = 1, float step = 0.01f, bool enabled = true);
+bool Knob(BitMotor::Rect area, float& value, float min, float max, float step, float origin, bool enabled = true);
+
+// A view on something larger than the area, with scroll bars when it does not fit. `content`: its size;
+// `scroll`: how far it has moved, in pixels (kept within range). Returns where the content's top-left corner
+// goes, and cuts what is drawn to the view (Screen::PushClip) until EndScrollArea. The wheel scrolls up and
+// down, with Shift left and right; with Ctrl held it does nothing (that is for zooming).
+//     Vec2 at = Fx::BeginScrollArea(area, {columns * cell, rows * cell}, scroll);
+//     DrawCells(at);
+//     Fx::EndScrollArea();
+Vec2 BeginScrollArea(BitMotor::Rect area, Vec2 content, Vec2& scroll, bool enabled = true);
+void EndScrollArea();
+// The part of the open scroll area that shows the content (without its bars).
+BitMotor::Rect ScrollView();
+
+// A grid of cells for editors (steps, a piano roll, a tracker, pixels), in a scroll area. The grid draws its
+// background and lines and answers the mouse; the caller draws what is in the cells between BeginGrid and
+// EndGrid, with GridCell to know where each one is.
+struct Grid {
+    Vec2 Cell = {16, 16};
+    int Columns = 16, Rows = 16;
+    // A stronger line every MajorColumns columns and MajorRows rows (0: none), and a slightly darker
+    // background every other BandColumns columns (beats in a step sequencer; 0: none).
+    int MajorColumns = 0, MajorRows = 0, BandColumns = 0;
+    // How far it has scrolled, in pixels (the grid keeps it in range).
+    Vec2 Scroll = {0, 0};
+};
+struct GridPoint {
+    int Column = -1, Row = -1;
+    bool Valid() const { return Column >= 0 && Row >= 0; }
+    bool operator==(const GridPoint&) const = default;
+};
+// What the mouse did on the grid this frame.
+struct GridInput {
+    GridPoint Hovered;      // the cell under the mouse (not Valid outside)
+    GridPoint Pressed;      // the left button went down on this cell
+    GridPoint RightPressed; // the right button went down on this cell
+    GridPoint DragFrom;     // while the left button is held after pressing on the grid: where it went down
+    bool Dragging = false;  // the left button is held after pressing on the grid (Hovered is where it is now)
+    bool Released = false;  // the left button went up after pressing on the grid (Hovered is where)
+};
+GridInput BeginGrid(BitMotor::Rect area, Grid& grid, bool enabled = true);
+// The area of a cell of the grid being drawn (it can be outside the view: the clip cuts it).
+BitMotor::Rect GridCell(int column, int row);
+// A selection over the cells from `a` to `b` (in any order), in the accent colour.
+void GridSelection(GridPoint a, GridPoint b);
+void EndGrid();
+
+// Drag and drop with a text payload (an instrument's or a pattern's name...). A drag starts when the left
+// button goes down on the source's area and the mouse moves 4 pixels; `label` follows the pointer. True
+// while this source is being dragged.
+//     Fx::DragSource(row, "pattern:" + name, name);
+//     if (std::string what; Fx::DropTarget(playlist, what)) Add(what);
+bool DragSource(BitMotor::Rect area, std::string_view payload, std::string_view label = {});
+// True on the frame a drag is let go over the area, with what it carried in `payload`. While a drag is over
+// it, the area is outlined in the accent colour.
+bool DropTarget(BitMotor::Rect area, std::string& payload);
+// What is being dragged now (empty: nothing).
+std::string_view Dragged();
+
 // ---------------------------------------------------------------- menus
 // One menu is open at a time, drawn over everything with a shadow. Inside, the mouse or Up/Down and
 // Confirm choose an item; Escape or a click outside close it. Menu and BeginContextMenu are true while
@@ -193,6 +264,15 @@ bool MenuItem(std::string_view label, std::string_view shortcut = {}, bool enabl
 // The same with a check, switching `checked`.
 bool CheckMenuItem(std::string_view label, bool& checked, std::string_view shortcut = {}, bool enabled = true);
 void MenuSeparator();
+// A row of the open menu that opens a submenu beside it (pointing at it, a click, Right or Confirm); Left or
+// Escape go back. True while its submenu is open: then give it its items and call EndMenu. One level only:
+// inside a submenu it is false.
+//     if (Fx::BeginSubMenu(Tr("menu.export"))) {
+//         if (Fx::MenuItem("WAV")) ExportWav();
+//         Fx::EndMenu();
+//     }
+bool BeginSubMenu(std::string_view label, bool enabled = true);
+// Ends the menu (or the submenu) that is being given its items.
 void EndMenu();
 
 } // namespace BitMotor::UI::JFxStyle

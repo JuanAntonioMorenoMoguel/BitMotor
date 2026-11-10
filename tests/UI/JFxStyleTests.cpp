@@ -395,3 +395,278 @@ TEST(JFxDialogsAreModal) {
     Frame(screen);
     CHECK(inside);
 }
+
+namespace {
+
+void Hold(Vec2 at) {
+    Detail::InputMouseMove(at);
+    Detail::InputMouseButton(MouseButton::Left, true);
+}
+
+void Let(Vec2 at) {
+    Detail::InputMouseMove(at);
+    Detail::InputMouseButton(MouseButton::Left, false);
+}
+
+} // namespace
+
+TEST(JFxClipsCutWidgetsAndTheirClicks) {
+    Fresh();
+    bool pressed = false;
+    auto screen = [&] {
+        Screen::PushClip({0, 0, 100, 50});
+        pressed = Fx::Button({0, 30, 100, 40}, "Half hidden");
+        Screen::PopClip();
+    };
+    Click({50, 60}); // on the button, outside the clip
+    Frame(screen);
+    CHECK(!pressed);
+    Click({50, 40});
+    Frame(screen);
+    CHECK(pressed);
+    // Nothing of the button is queued below the clip.
+    for (const Detail::QueuedSprite& s : Detail::SpriteQueue()) CHECK(s.Instance.Y + s.Instance.Height <= 50.0f);
+}
+
+TEST(JFxSubMenusOpenBesideTheirMenu) {
+    Fresh();
+    bool opened = false, inside = false, wav = false, plain = false;
+    auto screen = [&] {
+        Fx::BeginMenuBar({0, 0, 320, 24});
+        opened = Fx::Menu("File");
+        inside = false;
+        if (opened) {
+            plain = Fx::MenuItem("New");
+            if (Fx::BeginSubMenu("Export")) {
+                inside = true;
+                CHECK(!Fx::BeginSubMenu("Deeper")); // one level only
+                wav = Fx::MenuItem("WAV") || wav;
+                Fx::MenuItem("MIDI");
+                Fx::EndMenu();
+            }
+            Fx::EndMenu();
+        }
+        Fx::EndMenuBar();
+    };
+    Click({10, 10});
+    Frame(screen);
+    Frame(screen);
+    CHECK(opened);
+    CHECK(!inside);
+    // Pointing at "Export" (the second row) opens its submenu; pointing back at "New" closes it.
+    Detail::InputMouseMove({20, 60});
+    Frame(screen);
+    CHECK(inside);
+    Detail::InputMouseMove({20, 38});
+    Frame(screen);
+    CHECK(!inside);
+    CHECK(opened);
+    // The keyboard: Down to "Export", Right into the submenu, Left back out, Right again and Enter.
+    Tap(Key::Down);
+    Frame(screen);
+    CHECK(!inside);
+    Tap(Key::Right);
+    Frame(screen);
+    CHECK(inside);
+    CHECK(opened);
+    Tap(Key::Left);
+    Frame(screen);
+    CHECK(!inside);
+    CHECK(opened); // Left only left the submenu
+    Tap(Key::Right);
+    Frame(screen);
+    Tap(Key::Enter);
+    Frame(screen);
+    CHECK(wav);
+    CHECK(!plain);
+    Frame(screen);
+    CHECK(!opened); // choosing in the submenu closes everything
+}
+
+TEST(JFxSpinnersStep) {
+    Fresh();
+    int bpm = 120;
+    float volume = 0.5f;
+    bool changed = false;
+    auto screen = [&] {
+        changed = Fx::Spinner({0, 0, 100, 24}, bpm, 20, 125, 1);
+        Fx::Spinner({0, 40, 100, 24}, volume, 0, 1, 0.05f, 2);
+    };
+    Frame(screen);
+    Click({93, 4}); // the up arrow
+    Frame(screen);
+    CHECK(changed);
+    CHECK_EQ(bpm, 121);
+    Click({93, 20}); // the down arrow
+    Frame(screen);
+    CHECK_EQ(bpm, 120);
+    Detail::InputMouseMove({40, 10});
+    Detail::InputMouseWheel(3);
+    Frame(screen);
+    CHECK_EQ(bpm, 123);
+    Detail::InputMouseWheel(30);
+    Frame(screen);
+    CHECK_EQ(bpm, 125); // kept within range
+    // Dragging down: a step every 4 pixels.
+    Hold({40, 12});
+    Frame(screen);
+    Detail::InputMouseMove({40, 21});
+    Frame(screen);
+    CHECK_EQ(bpm, 123);
+    Let({40, 21});
+    Frame(screen);
+    Click({93, 44});
+    Frame(screen);
+    CHECK_NEAR(volume, 0.55f, 1e-5f);
+}
+
+TEST(JFxKnobsTurn) {
+    Fresh();
+    float pan = 0;
+    auto screen = [&] { Fx::Knob({0, 0, 40, 40}, pan, -1, 1, 0.01f, 0.0f); };
+    Frame(screen);
+    // 150 pixels for the whole range: 75 up is half of it.
+    Hold({20, 20});
+    Frame(screen);
+    Detail::InputMouseMove({20, -55});
+    Frame(screen);
+    CHECK_NEAR(pan, 1.0f, 1e-4f);
+    Detail::InputMouseMove({20, 57.5f});
+    Frame(screen);
+    CHECK_NEAR(pan, -0.5f, 1e-4f);
+    Let({20, 57.5f});
+    Frame(screen);
+    Detail::InputMouseMove({20, 20});
+    Detail::InputMouseWheel(5);
+    Frame(screen);
+    CHECK_NEAR(pan, -0.45f, 1e-4f);
+}
+
+TEST(JFxScrollAreasMoveAndCut) {
+    Fresh();
+    Vec2 scroll{0, 0}, at{0, 0};
+    Rect view;
+    bool pressed = false;
+    std::optional<Rect> clip;
+    auto screen = [&] {
+        at = Fx::BeginScrollArea({0, 0, 100, 100}, {400, 400}, scroll);
+        view = Fx::ScrollView();
+        clip = Screen::Clip();
+        pressed = Fx::Button({at.X, at.Y + 80, 50, 40}, "Inside");
+        Fx::EndScrollArea();
+    };
+    Frame(screen);
+    CHECK(clip.has_value());
+    if (clip) CHECK(*clip == view);
+    CHECK(!Screen::Clip());
+    CHECK(view.Width < 98.0f); // room for the bars
+    CHECK(view.Height < 98.0f);
+    CHECK_EQ(at.X, 1.0f);
+    // The wheel scrolls down; with Shift across; with Ctrl not at all.
+    Detail::InputMouseMove({50, 50});
+    Detail::InputMouseWheel(-1);
+    Frame(screen);
+    CHECK(scroll.Y > 0);
+    CHECK_EQ(scroll.X, 0.0f);
+    const float down = scroll.Y;
+    Detail::InputKey(Key::LeftShift, true);
+    Detail::InputMouseWheel(-1);
+    Frame(screen);
+    Detail::InputKey(Key::LeftShift, false);
+    CHECK_EQ(scroll.X, down);
+    Detail::InputKey(Key::LeftCtrl, true);
+    Detail::InputMouseWheel(-1);
+    Frame(screen);
+    Detail::InputKey(Key::LeftCtrl, false);
+    CHECK_EQ(scroll.Y, down);
+    Detail::InputMouseWheel(-100);
+    Frame(screen);
+    CHECK_EQ(scroll.Y, 400 - view.Height); // kept within range
+    // Back to the top: the button is half outside the view, and does not answer there.
+    scroll = {0, 0};
+    Frame(screen);
+    Click({10, view.Bottom() + 5});
+    Frame(screen);
+    CHECK(!pressed);
+    Click({10, view.Bottom() - 3});
+    Frame(screen);
+    CHECK(pressed);
+}
+
+TEST(JFxGridsAnswerTheMouse) {
+    Fresh();
+    Fx::Grid grid{.Cell = {10, 10}, .Columns = 16, .Rows = 8, .MajorColumns = 4};
+    Fx::GridInput in;
+    Rect cell;
+    auto screen = [&] {
+        in = Fx::BeginGrid({0, 0, 200, 100}, grid);
+        cell = Fx::GridCell(2, 1);
+        Fx::GridSelection({1, 1}, {3, 2});
+        Fx::EndGrid();
+    };
+    Frame(screen);
+    CHECK(cell == Rect(21, 11, 10, 10));
+    Hold({25, 15});
+    Frame(screen);
+    CHECK(in.Pressed == (Fx::GridPoint{2, 1}));
+    CHECK(in.Dragging);
+    Detail::InputMouseMove({55, 35});
+    Frame(screen);
+    CHECK(!in.Pressed.Valid());
+    CHECK(in.Dragging);
+    CHECK(in.DragFrom == (Fx::GridPoint{2, 1}));
+    CHECK(in.Hovered == (Fx::GridPoint{5, 3}));
+    Detail::InputMouseMove({500, 500}); // out of the grid: the edge
+    Frame(screen);
+    CHECK(in.Hovered == (Fx::GridPoint{15, 7}));
+    Let({500, 500});
+    Frame(screen);
+    CHECK(in.Released);
+    CHECK(!in.Dragging);
+    Frame(screen);
+    CHECK(!in.Released);
+    CHECK(!in.Hovered.Valid());
+    Click({35, 75}, MouseButton::Right);
+    Frame(screen);
+    CHECK(in.RightPressed == (Fx::GridPoint{3, 7}));
+}
+
+TEST(JFxDragAndDrop) {
+    Fresh();
+    bool dragging = false, dropped = false;
+    std::string got, seen;
+    auto screen = [&] {
+        dragging = Fx::DragSource({0, 0, 50, 20}, "pattern:intro", "intro");
+        dropped = Fx::DropTarget({100, 0, 50, 50}, got);
+        seen = std::string(Fx::Dragged());
+    };
+    Hold({10, 10});
+    Frame(screen);
+    CHECK(!dragging);
+    Detail::InputMouseMove({12, 10}); // less than 4 pixels: not yet
+    Frame(screen);
+    CHECK(!dragging);
+    Detail::InputMouseMove({120, 20});
+    Frame(screen);
+    CHECK(dragging);
+    CHECK_EQ(seen, std::string("pattern:intro"));
+    Let({120, 20});
+    Frame(screen);
+    CHECK(dropped);
+    CHECK_EQ(got, std::string("pattern:intro"));
+    Frame(screen);
+    CHECK(!dropped);
+    CHECK_EQ(seen, std::string(""));
+    // Let go anywhere else: nothing.
+    got.clear();
+    Hold({10, 10});
+    Frame(screen);
+    Detail::InputMouseMove({70, 80});
+    Frame(screen);
+    Let({70, 80});
+    Frame(screen);
+    CHECK(!dropped);
+    Frame(screen);
+    CHECK(got.empty());
+    CHECK_EQ(seen, std::string(""));
+}

@@ -1,6 +1,7 @@
 #pragma once
 #include "BitMotor/Colors/Color.h"
 #include "BitMotor/Colors/Colors.h"
+#include "BitMotor/Math/Shapes.h"
 #include "BitMotor/Math/Vector.h"
 #include "BitMotor/Render/Texture.h"
 
@@ -44,6 +45,15 @@ struct Sprite2D {
 namespace Screen {
 // Queues the sprite for this frame. An empty Region draws nothing.
 void Draw(const Sprite2D& sprite);
+// Cuts what is drawn in the Hud layer (sprites, text, shapes, UI) to `area`, in screen pixels, until PopClip:
+// for lists and panels that scroll. Clips nest (each one is inside the one before), and the UI does not
+// answer the mouse outside the clip either. Rotated sprites are not cut: they are only left out when they
+// are wholly outside.
+//     Screen::PushClip(list);  DrawRows(list.Y - scroll);  Screen::PopClip();
+void PushClip(const Rect& area);
+void PopClip();
+// The clip in force; nullopt when there is none.
+std::optional<Rect> Clip();
 } // namespace Screen
 
 } // namespace BitMotor
