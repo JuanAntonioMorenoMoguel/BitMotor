@@ -23,6 +23,8 @@ constexpr float SampleTime = 1.0f / float(MixRate);
 constexpr float GainSmoothing = 0.002f;
 // The music's low-pass while paused.
 constexpr float PausedMuffle = 0.05f;
+// Music::PlayNote at a time.
+constexpr int NoteVoices = 16;
 
 struct Playing {
     std::shared_ptr<SoundData> Sound;
@@ -39,6 +41,12 @@ struct Slot {
 
 struct ProceduralSource;
 
+// A note of Music::PlayNote.
+struct NoteVoice {
+    std::unique_ptr<MusicSource> Source;
+    int Id = 0;
+};
+
 struct Mixer {
     std::mutex Lock;
     std::array<Playing, MixVoices> Voices;
@@ -48,6 +56,10 @@ struct Mixer {
     std::vector<std::shared_ptr<SoundData>> RetiredSounds;
     std::vector<std::unique_ptr<MusicSource>> RetiredMusic;
     std::array<float, 8> Params{};
+    // Song channels muted with Music::Mute.
+    std::uint64_t Muted = 0;
+    std::array<NoteVoice, NoteVoices> Notes;
+    int NoteCounter = 0;
     // The volumes (Settings times Audio::SetVolume) and where they are on their way to them.
     float MasterTarget = 1, MusicTarget = 1, SoundTarget = 1;
     float Master = 1, MusicGain = 1, SoundGain = 1;
@@ -76,6 +88,11 @@ void Retire(Mixer& m, Playing& voice) {
     if (!voice.Sound) return;
     m.RetiredSounds.push_back(std::move(voice.Sound));
     voice.Sound = nullptr;
+}
+
+void Retire(Mixer& m, NoteVoice& note) {
+    if (note.Source) m.RetiredMusic.push_back(std::move(note.Source));
+    note = NoteVoice{};
 }
 
 void Retire(Mixer& m, Slot& slot) {
@@ -140,8 +157,12 @@ void MixBlock(Mixer& m, float* out, int frames) {
     float sounds[2 * Block] = {}, music[2 * Block] = {}, scratch[2 * Block];
     for (Playing& v : m.Voices)
         if (v.Sound && !RenderVoice(v, sounds, frames)) Retire(m, v);
+    if (m.Current.Source) m.Current.Source->Muted = m.Muted;
+    if (m.Old.Source) m.Old.Source->Muted = m.Muted;
     if (m.Current.Source && !RenderSlot(m.Current, scratch, music, frames)) Retire(m, m.Current);
     if (m.Old.Source && !RenderSlot(m.Old, scratch, music, frames)) Retire(m, m.Old);
+    for (NoteVoice& note : m.Notes)
+        if (note.Source && !note.Source->Render(music, frames)) Retire(m, note);
     m.MusicSamples += std::uint64_t(frames);
 
     const float muffleTarget = m.Paused ? PausedMuffle : 1.0f;
@@ -225,11 +246,14 @@ void ResetAudio() {
         for (Playing& v : m.Voices) Retire(m, v);
         Retire(m, m.Current);
         Retire(m, m.Old);
+        for (NoteVoice& note : m.Notes) Retire(m, note);
         sounds.swap(m.RetiredSounds);
         music.swap(m.RetiredMusic);
         m.RetiredSounds.reserve(MixVoices * 2);
         m.RetiredMusic.reserve(8);
         m.Params = {};
+        m.Muted = 0;
+        m.NoteCounter = 0;
         m.MasterTarget = m.MusicTarget = m.SoundTarget = 1;
         m.Master = m.MusicGain = m.SoundGain = 1;
         m.Paused = false;
@@ -479,7 +503,9 @@ bool Play(const std::filesystem::path& path, float fade, bool loop) {
     return true;
 }
 
-void Play(const Song& song, float fade, bool loop) { Detail::PlayMusic(Detail::MakeSongSource(song, loop), fade); }
+void Play(const Song& song, float fade, bool loop, int order, int row) {
+    Detail::PlayMusic(Detail::MakeSongSource(song, loop, order, row), fade);
+}
 
 void Procedural(MusicFunction function, float fade, double bpm) {
     if (!function) return;
@@ -492,6 +518,71 @@ bool IsPlaying() {
     Detail::Mixer& m = Detail::Mix();
     std::lock_guard lock(m.Lock);
     return m.Current.Source != nullptr;
+}
+
+SongPosition Position() {
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    if (!m.Current.Source) return {};
+    return m.Current.Source->CurrentPosition();
+}
+
+void Mute(int channel, bool muted) {
+    if (channel < 0 || channel >= 64) {
+        Log::Warn("Music::Mute: channel {} out of 0..63", channel);
+        return;
+    }
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    const std::uint64_t bit = std::uint64_t(1) << channel;
+    m.Muted = muted ? m.Muted | bit : m.Muted & ~bit;
+}
+
+bool Muted(int channel) {
+    if (channel < 0 || channel >= 64) return false;
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    return ((m.Muted >> channel) & 1u) != 0;
+}
+
+float Level(int channel) {
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    if (!m.Current.Source || (channel >= 0 && channel < 64 && ((m.Muted >> channel) & 1u))) return 0;
+    return m.Current.Source->Level(channel);
+}
+
+int PlayNote(const Instrument& instrument, float note, float volume) {
+    auto source = Detail::MakeNoteSource(instrument, note, volume);
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    // A free voice, or the oldest.
+    Detail::NoteVoice* chosen = nullptr;
+    for (Detail::NoteVoice& voice : m.Notes)
+        if (!voice.Source) {
+            chosen = &voice;
+            break;
+        } else if (!chosen || voice.Id < chosen->Id) {
+            chosen = &voice;
+        }
+    Detail::Retire(m, *chosen);
+    chosen->Source = std::move(source);
+    chosen->Id = ++m.NoteCounter;
+    return chosen->Id;
+}
+
+void ReleaseNote(int id) {
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    for (Detail::NoteVoice& voice : m.Notes)
+        if (voice.Source && voice.Id == id) voice.Source->Release();
+}
+
+void ReleaseNotes() {
+    Detail::Mixer& m = Detail::Mix();
+    std::lock_guard lock(m.Lock);
+    for (Detail::NoteVoice& voice : m.Notes)
+        if (voice.Source) voice.Source->Release();
 }
 
 void SetParam(int index, float value) {

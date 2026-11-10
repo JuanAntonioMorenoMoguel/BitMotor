@@ -166,3 +166,155 @@ TEST(InstrumentsShapeTheSound) {
         CHECK(std::abs(out[2 * i] * 2 - std::round(out[2 * i] * 2)) < 1e-4f); // -0.5, 0 or 0.5
     }
 }
+
+namespace {
+
+// The same song as Simple, built in code.
+Song SimpleSong() {
+    Song song;
+    song.Loop = -1;
+    Instrument lead;
+    lead.Attack = lead.Decay = lead.Release = 0;
+    lead.Sustain = 1;
+    song.Instruments["lead"] = lead;
+    song.Patterns["a"] = {4, {{"lead", {"A4", "", "off", "C4:0.5"}}}};
+    song.Order = {"a", "a"};
+    return song;
+}
+
+} // namespace
+
+TEST(NoteEntriesAreReadAndWritten) {
+    std::optional<NoteEntry> c = NoteEntry::Parse(" C4:0.5 ");
+    CHECK(c.has_value());
+    if (c) {
+        CHECK(c->Type == NoteEntry::Kind::On);
+        CHECK_EQ(c->Note, 60.0f);
+        CHECK_EQ(c->Volume, 0.5f);
+        CHECK_EQ(c->ToString(), std::string("C4:0.5"));
+    }
+    CHECK(NoteEntry::Parse("off")->Type == NoteEntry::Kind::Off);
+    CHECK(NoteEntry::Parse("")->Type == NoteEntry::Kind::Keep);
+    CHECK(NoteEntry::Parse("---")->Type == NoteEntry::Kind::Keep);
+    CHECK(!NoteEntry::Parse("X9"));
+    CHECK(!NoteEntry::Parse("C4:-1"));
+    CHECK_EQ(NoteEntry::Parse("Bb2")->ToString(), std::string("A#2"));
+    CHECK_EQ(NoteEntry{}.ToString(), std::string(""));
+    CHECK_EQ((NoteEntry{NoteEntry::Kind::Off}).ToString(), std::string("off"));
+    CHECK_EQ(NoteName(60), std::string("C4"));
+    CHECK_EQ(NoteName(61), std::string("C#4"));
+    CHECK_EQ(NoteName(0), std::string("C-1"));
+    CHECK_EQ(NoteName(127), std::string("G9"));
+    CHECK_EQ(NoteName(61.5f), std::string("61.5"));
+    CHECK_EQ(ParseNote(NoteName(69)).value_or(0), 69.0f);
+}
+
+TEST(SongsKeepTheirBeats) {
+    Song song = SimpleSong();
+    CHECK_EQ(song.Beats, 4);
+    song.Beats = 3;
+    fs::path file = fs::temp_directory_path() / "BitMotorTests" / "Songs" / "beats.bitmusic";
+    CHECK(song.Save(file));
+    std::optional<Song> again = Song::Load(file);
+    CHECK(again.has_value());
+    if (again) CHECK_EQ(again->Beats, 3);
+    // It does not change the sound.
+    Song four = SimpleSong();
+    CHECK(song.Render() == four.Render());
+}
+
+TEST(SongsRenderWhole) {
+    Song song = SimpleSong();
+    std::vector<float> once = song.Render();
+    // 8 rows of 6000 samples; the last note is released when its row is over (Release 0: at once).
+    CHECK_EQ(once.size(), std::size_t(2 * (8 * Row + 1)));
+    CHECK_NEAR(Peak(once, 7 * Row + 10, 8 * Row), 0.25f, 1e-5f);
+    // The same samples as playing it.
+    std::vector<float> played = Detail::RenderSong(song, 1.0);
+    CHECK(std::equal(played.begin(), played.end(), once.begin()));
+    // Repeats: again from Loop.
+    song.Loop = 1;
+    CHECK_EQ(song.Render(1).size(), std::size_t(2 * (8 * Row + 1)));
+    CHECK_EQ(song.Render(3).size(), std::size_t(2 * (16 * Row + 1)));
+    song.Loop = -1;
+    CHECK_EQ(song.Render(3).size(), once.size());
+    // The same input, the same samples.
+    CHECK(song.Render() == once);
+}
+
+TEST(SongsStartAnywhere) {
+    Song song = SimpleSong();
+    song.Order = {"a", "missing", "a"};
+    std::vector<float> block(2 * (Row + 10));
+    // From the second "a" (position 2 in the file's Order), row 3: C4 at half volume.
+    auto source = Detail::MakeSongSource(song, false, 2, 3);
+    CHECK_EQ(source->CurrentPosition().Order, 2);
+    CHECK_EQ(source->CurrentPosition().Row, 3);
+    CHECK(source->Render(block.data(), Row));
+    CHECK_NEAR(Peak(block, 10, Row), 0.25f, 1e-5f);
+    CHECK_EQ(source->CurrentPosition().Order, 2);
+    CHECK_EQ(source->CurrentPosition().Row, 3);
+    // Position 1 does not exist: it starts at the next one that does.
+    CHECK_EQ(Detail::MakeSongSource(song, false, 1)->CurrentPosition().Order, 2);
+    // Out of range: the beginning.
+    auto start = Detail::MakeSongSource(song, false, 9, 99);
+    CHECK_EQ(start->CurrentPosition().Order, 0);
+    CHECK_EQ(start->CurrentPosition().Row, 0);
+    // Rows go by.
+    std::fill(block.begin(), block.end(), 0.0f);
+    start->Render(block.data(), Row + 10);
+    CHECK_EQ(start->CurrentPosition().Row, 1);
+}
+
+TEST(SongChannelsMuteAndMeasure) {
+    Detail::ResetAudio();
+    Song song = SimpleSong();
+    song.Loop = 0;
+    Music::Play(song, 0);
+    CHECK_EQ(Music::Position().Order, 0);
+    std::vector<float> out(2 * 1024);
+    Music::Mute(0);
+    CHECK(Music::Muted(0));
+    Detail::MixAudio(out.data(), 1024);
+    CHECK_EQ(Peak(out, 0, 1024), 0.0f);
+    CHECK_EQ(Music::Level(0), 0.0f);
+    Music::Mute(0, false);
+    CHECK(!Music::Muted(0));
+    std::fill(out.begin(), out.end(), 0.0f);
+    Detail::MixAudio(out.data(), 1024);
+    CHECK_NEAR(Peak(out, 0, 1024), 0.5f, 1e-3f);
+    CHECK_NEAR(Music::Level(0), 0.5f, 1e-3f);
+    CHECK_EQ(Music::Level(5), 0.0f);
+    Music::Mute(99); // out of range: ignored
+    CHECK(!Music::Muted(99));
+    Music::Stop(0);
+    CHECK_EQ(Music::Position().Order, -1);
+    Detail::ResetAudio();
+}
+
+TEST(SingleNotesPlayAndRelease) {
+    Detail::ResetAudio();
+    Instrument lead;
+    lead.Attack = lead.Decay = lead.Release = 0;
+    lead.Sustain = 1;
+    std::vector<float> out(2 * 4800);
+    const int id = Music::PlayNote(lead, 69);
+    Detail::MixAudio(out.data(), 4800);
+    CHECK_NEAR(Peak(out, 0, 4800), 0.5f, 1e-3f);
+    CHECK(std::abs(Rises(out, 0, 4800) - 44) <= 1); // 0.1 s at 440 Hz
+    Music::ReleaseNote(id);
+    std::fill(out.begin(), out.end(), 0.0f);
+    Detail::MixAudio(out.data(), 4800);
+    CHECK_EQ(Peak(out, 2, 4800), 0.0f);
+    // Two at once, then all released.
+    Music::PlayNote(lead, 60, 0.5f);
+    Music::PlayNote(lead, 64, 0.5f);
+    std::fill(out.begin(), out.end(), 0.0f);
+    Detail::MixAudio(out.data(), 4800);
+    CHECK(Peak(out, 0, 4800) > 0.3f);
+    Music::ReleaseNotes();
+    std::fill(out.begin(), out.end(), 0.0f);
+    Detail::MixAudio(out.data(), 4800);
+    CHECK_EQ(Peak(out, 2, 4800), 0.0f);
+    Detail::ResetAudio();
+}

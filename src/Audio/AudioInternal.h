@@ -34,13 +34,25 @@ struct MusicSource {
     virtual bool Render(float* out, int frames) = 0;
     // For Beat and Pulse.
     double Bpm = 120;
+    // Songs only (audio thread, under the lock). Channels muted with Music::Mute: set by the mixer before
+    // each Render.
+    std::uint64_t Muted = 0;
+    // Where the song is, and a channel's peak in the last block.
+    virtual SongPosition CurrentPosition() const { return {}; }
+    virtual float Level(int) const { return 0; }
+    // A single note (Music::PlayNote): starts its release.
+    virtual void Release() {}
 };
 
 // Decodes WAV, FLAC, MP3 or OGG into stereo at MixRate. nullopt (and the reason in `error`) if it cannot.
 std::optional<std::vector<float>> DecodeAudio(std::span<const std::uint8_t> bytes, std::string* error = nullptr);
 // A source that decodes as it plays. nullptr (and `error`) if the bytes are not a known format.
 std::unique_ptr<MusicSource> MakeFileSource(std::vector<std::uint8_t> bytes, bool loop, std::string* error = nullptr);
-std::unique_ptr<MusicSource> MakeSongSource(const Song& song, bool loop);
+// A song from `order` (a position in song.Order) and `row`. `passes`: how many times it goes through Order
+// (from Loop after the first) before it ends; -1 forever (with `loop`).
+std::unique_ptr<MusicSource> MakeSongSource(const Song& song, bool loop, int order = 0, int row = 0, int passes = -1);
+// One note of an instrument, played until it is released and has faded (Music::PlayNote).
+std::unique_ptr<MusicSource> MakeNoteSource(const Instrument& instrument, float note, float volume);
 std::unique_ptr<MusicSource> MakeProceduralSource(MusicFunction function, double bpm);
 
 // Adds what is playing to `out` (stereo, interleaved, starting at 0). Called by the device, or by
@@ -62,6 +74,7 @@ void PlaySound(const std::shared_ptr<SoundData>& sound, float volume, float pitc
 void StopSound(const SoundData* sound);
 void PlayMusic(std::unique_ptr<MusicSource> source, float fade);
 // A note as a MIDI number: "C4" (60), "F#3", "Bb2", or the number itself ("60"). nullopt if it is not one.
+// (The same as BitMotor::ParseNote.)
 std::optional<float> ParseNote(std::string_view text);
 // The first `seconds` of a song as samples (stereo, interleaved, at MixRate), without the mixer: for tests.
 std::vector<float> RenderSong(const Song& song, double seconds);
