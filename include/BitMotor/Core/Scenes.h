@@ -142,14 +142,34 @@ template <class T, class... A> std::unique_ptr<T> MakeScene(A&&... args) {
     return std::make_unique<T>(std::forward<A>(args)...);
 }
 
-// How a stack change looks. None: at once. Fade: the screen goes to `color` in half the time, the change
-// happens, and it comes back in the other half. While it fades out no scene updates.
+// How a stack change looks.
+//     None:  at once.
+//     Fade:  the screen goes to `color` in half the time, the change happens, and it comes back in the other half.
+//     Wipe:  the same with an edge of `color` that sweeps across the screen towards a side, covering it, and
+//            sweeps on towards the same side uncovering the new scene.
+//     Slide: the new scene pushes the old one off the screen towards a side (the old one is the last frame
+//            drawn before the change, held still).
+// While the screen is covered (Fade, Wipe) or for the one frame before a slide, no scene updates.
+//     Scenes::Push(MakeScene<Options>(), Transition::Slide(0.4f, Transition::Left));
+//     Scenes::Replace(MakeScene<Level>(2), Transition::Wipe(0.6f, Transition::Down, Colors::Black));
 struct Transition {
+    enum class Style { Fade, Wipe, Slide };
+    // Where a Wipe's edge and a Slide's scenes move to.
+    enum Side { Left, Right, Up, Down };
+
     float Seconds = 0;
     Color Tint = Colors::Black;
+    Style Look = Style::Fade;
+    Side Towards = Left;
 
     static Transition None() { return {}; }
     static Transition Fade(float seconds = 0.4f, Color color = Colors::Black) { return {seconds, color}; }
+    static Transition Wipe(float seconds = 0.6f, Side towards = Right, Color color = Colors::Black) {
+        return {seconds, color, Style::Wipe, towards};
+    }
+    static Transition Slide(float seconds = 0.4f, Side towards = Left) {
+        return {seconds, Colors::Black, Style::Slide, towards};
+    }
 };
 
 // Emitted after the stack changes.

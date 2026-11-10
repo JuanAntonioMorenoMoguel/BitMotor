@@ -13,7 +13,12 @@ void DrawScenes();
 // The debug panels of every scene in the stack, bottom first.
 void DebugPanelScenes();
 void ShutdownScenes();
-// How dark the fade is now, 0..1 (0: no fade).
+// How much of the screen the transition covers now, 0..1 (0: none; a Fade's darkness, a Wipe's share).
 float SceneFade();
+// A Slide moving now: how far it has gone (0..1, eased) and towards which side (Transition::Side).
+// The renderer draws the new frame and the held one side by side with it.
+bool SceneSlide(float& progress, int& towards);
+// The frame before a Slide was drawn: the renderer keeps a copy of it (the old scene) at the end of it.
+bool SceneSnapshotWanted();
 
 } // namespace BitMotor::Detail

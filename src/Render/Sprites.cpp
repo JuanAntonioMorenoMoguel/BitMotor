@@ -1,8 +1,11 @@
+#include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
 #include "BitMotor/Core/Settings.h"
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Math/Functions.h"
 #include "BitMotor/Math/Noise.h"
+#include "BitMotor/Render/RenderTexture.h"
+#include "Render/RendererInternal.h"
 #include "Render/SpritesInternal.h"
 
 #include <algorithm>
@@ -14,12 +17,18 @@ namespace {
 
 Camera2D DefaultCamera() {
     Camera2D camera;
-    camera.Position = Screen::Center();
+    camera.Position = Detail::ViewCenter();
     return camera;
 }
 
 Camera2D Active;
 std::vector<Detail::QueuedSprite> Queue;
+
+// RenderTextures: the one being drawn into (its draw is the last of Targets), and what the screen had then.
+std::vector<Detail::TargetDraw> Targets;
+bool Inside = false;
+std::vector<Detail::QueuedSprite> ScreenQueue;
+Camera2D ScreenCamera;
 
 float ShakeAmount(const Camera2D& camera) {
     float trauma = Clamp(camera.Trauma, 0.0f, 1.0f);
@@ -49,11 +58,11 @@ float Camera2D::ShakeAngle() const {
 
 Vec2 Camera2D::ToScreen(Vec2 world) const {
     Vec2 relative = Rotate(world - Position, -(Rotation + ShakeAngle())) * Zoom;
-    return relative + Screen::Center() + ShakeOffset();
+    return relative + Detail::ViewCenter() + ShakeOffset();
 }
 
 Vec2 Camera2D::ToWorld(Vec2 screen) const {
-    Vec2 relative = screen - Screen::Center() - ShakeOffset();
+    Vec2 relative = screen - Detail::ViewCenter() - ShakeOffset();
     float zoom = Zoom != 0 ? Zoom : 1.0f;
     return Rotate(relative * (1.0f / zoom), Rotation + ShakeAngle()) + Position;
 }
@@ -69,6 +78,36 @@ void Screen::Draw(const Sprite2D& sprite) {
     queued.Where = sprite.Layer;
     queued.Depth = sprite.Depth;
     Queue.push_back(std::move(queued));
+}
+
+RenderTexture RenderTexture::Create(int width, int height, Filter filter) {
+    RenderTexture texture;
+    if (width <= 0 || height <= 0) {
+        Log::Error("RenderTexture::Create: {}x{} is empty", width, height);
+        return texture;
+    }
+    texture.Image.Data = std::make_shared<Detail::TextureData>();
+    texture.Image.Data->Width = width;
+    texture.Image.Data->Height = height;
+    texture.Image.Data->Look = filter;
+    texture.Image.Data->Target = true;
+    Detail::GpuTexture(*texture.Image.Data); // now if there is a device; otherwise when it starts
+    return texture;
+}
+
+void RenderTexture::Begin(Color clear) {
+    if (Image) Detail::BeginTargetDraw(Image, true, clear);
+}
+
+void RenderTexture::Continue() {
+    if (Image) Detail::BeginTargetDraw(Image, false, Colors::Transparent);
+}
+
+void RenderTexture::End() {
+    if (Detail::InTargetDraw() && Detail::TargetDraws().back().Target == Image)
+        Detail::EndTargetDraw();
+    else if (Image)
+        Log::Warn("RenderTexture::End without its Begin");
 }
 
 namespace Detail {
@@ -111,9 +150,48 @@ SpriteInstance MakeInstance(const Sprite2D& sprite, const Camera2D* camera) {
 std::vector<QueuedSprite>& SpriteQueue() { return Queue; }
 
 void ResetSprites() {
+    Inside = false;
+    Targets.clear();
+    ScreenQueue.clear();
     Queue.clear();
     LightQueue().clear();
     Active = DefaultCamera();
+}
+
+std::vector<TargetDraw>& TargetDraws() { return Targets; }
+
+bool InTargetDraw() { return Inside; }
+
+Vec2 ViewCenter() { return Inside ? Targets.back().Target.Size() * 0.5f : Screen::Center(); }
+
+bool BeginTargetDraw(const Texture& target, bool clear, Color color) {
+    if (Inside) {
+        Log::Error("RenderTexture::Begin: another one is still open (End it first)");
+        return false;
+    }
+    ScreenQueue = std::move(Queue);
+    Queue.clear();
+    ScreenCamera = Active;
+    Inside = true;
+    Targets.push_back({target, clear, color, {}, {}});
+    Active = DefaultCamera();
+    return true;
+}
+
+void EndTargetDraw() {
+    if (!Inside) return;
+    Targets.back().Queue = std::move(Queue);
+    Queue = std::move(ScreenQueue);
+    ScreenQueue.clear();
+    Active = ScreenCamera;
+    Inside = false;
+}
+
+void ClearTargetDraw(Color color) {
+    if (!Inside) return;
+    Queue.clear();
+    Targets.back().Clear = true;
+    Targets.back().ClearColor = color;
 }
 
 void BuildSprites(const std::vector<QueuedSprite>& queue, std::vector<SpriteInstance>& instances,

@@ -9,3 +9,6 @@ target_include_directories(BitMotorTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${P
 target_compile_definitions(BitMotorTests PRIVATE BITMOTOR_EXPECTED_VERSION="${PROJECT_VERSION}")
 _BitMotor_Warnings(BitMotorTests)
 add_test(NAME BitMotorTests COMMAND BitMotorTests)
+# A TrueType font for the Font::Load tests (the one example 13 uses).
+target_compile_definitions(BitMotorTests PRIVATE
+    BITMOTOR_TEST_FONT="${PROJECT_SOURCE_DIR}/examples/13_Extras/Assets/fonts/PressStart2P.ttf")

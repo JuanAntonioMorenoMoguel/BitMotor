@@ -26,7 +26,7 @@ Librería C++ para crear juegos de forma sencilla. Unifica **nyiengilib** (motor
 ### Core
 - **Arranque:** `Config { Title, Width, Height, WindowWidth, WindowHeight, IntegerScaling, Fullscreen, VSync, TickRate, Icon, Organization, Version, SteamAppId, Renderer }`, `Run<T>(Config)`, `Run<Game, Renderer>`, `Quit()`, `Game { Start, Stop, DebugPanel }`.
 - **Services:** `Service { Start, Update, Stop }`, `Services::Add<T>, Get<T>, Find<T>, Has<T>, Remove<T>`.
-- **Scenes:** `Scene { Enter, Exit, Resume, Update, Draw, UpdateBelow, DrawBelow, Add<T>, Get<T>, Run(Sequence) }`, `MakeScene<T>(args)`, `Scenes::Push, Pop, Replace, Clear, Current`, `Transition::None / Fade`.
+- **Scenes:** `Scene { Enter, Exit, Resume, Update, Draw, UpdateBelow, DrawBelow, Add<T>, Get<T>, Run(Sequence) }`, `MakeScene<T>(args)`, `Scenes::Push, Pop, Replace, Clear, Current`, `Transition::None / Fade / Wipe(seconds, side, color) / Slide(seconds, side)` (`Transition::Left, Right, Up, Down`).
 - **Managers:** `Manager { Start, Update, Draw, Stop, Owner, Active }` (se actualizan en orden de alta).
 - **Events:** `Events::On<T>` → `Subscription`, `Emit<T>`, `Queue<T>`. Del motor: `WindowResized, GamepadConnected, GamepadDisconnected, FileChanged, SceneChanged, FocusChanged, OverlayChanged`.
 - **Tasks:** `Sequence().Wait, WaitUntil, Do, Tween, Parallel, Repeat`, `Tasks::Run` → `Task { Cancel, Done }`.
@@ -47,16 +47,16 @@ Formatos: WAV, FLAC, MP3, OGG y `.bitmusic` (canciones de BitMusic, sintetizadas
 `Sound { Load, Synth, Play(volume, pitch, pan), SetMaxVoices }`, `Voice { Advance, … }`, `Music { Play, Procedural, Stop, IsPlaying, SetParam, Beat, Pulse }`, `Audio::SetVolume(Bus), SetPaused`, `Synth::Sine, Square, Saw, Triangle, Noise, LowPass, HighPass, Bitcrush, Fall, AttackRelease, Decay, NoteToHz`.
 
 ### Textures
-`Filter { Nearest, Linear }`, `Texture { Load, FromPixels, Width, Height, Size, Full }`, `Atlas { Load, Sprite, Has, Animation, Socket }` (formato nyiengisprite), `Animation { Frame, Done, Duration, Fired }`.
+`Filter { Nearest, Linear }`, `Texture { Load, FromPixels, Width, Height, Size, Full }`, `RenderTexture { Create, Begin(clear), Continue, End, Source, Full }` (dibujar sprites, texto y formas en una textura), `Atlas { Load, Sprite, Has, Animation, Socket }` (formato nyiengisprite), `Animation { Frame, Done, Duration, Fired }`.
 
 ### Obj 2D
 `Layer { Background, World, Glow, Overlay, Hud }`, `Sprite2D { Region, Position, Rotation, Scale, Origin, Color, Flip, Flash, Layer, Depth, Material }`, `Draw(Sprite2D)`, `Camera2D { Position, Zoom, Rotation, Viewport, AddShake, Trauma, ShakeOffset, ShakeAngle, Update, ToWorld, ToScreen }`, `SetCamera`, `Light2D { Position, Height, Radius, Color, Intensity }`, `Screen::Draw(Light2D)`, `Lighting::Enable, SetAmbient, SetStepped, SetBloom`, `ScreenEffects { Vignette, Grain, Aberration, Saturation }`, `Screen::SetEffects, Flash`, `Texture::SetNormals` (atlas_n.png), `ParticleRange { Min, Max }`, `ParticleStyle { Region, Life, Speed, Direction, Spread, Gravity, Drag, StartSize, EndSize, StartColor, EndColor, Spin, RandomAngle, Layer, Depth }`, `Particles { Emit, Update, Draw, Clear, Count, Capacity }`.
 
 ### UI (inmediata)
-`Rect, RectOutline, Circle, Line, Triangle, Polygon`, `Panel, Button, Toggle, Slider, Bar, Segments, Image, Tooltip, Prompt, BeginModal, EndModal, Hovered, Clicked, SetTheme, OnClick`.
+`Rect, RectOutline, Circle, Line, Triangle, Polygon`, `Panel, Button, Toggle, Slider, Dropdown, TextField (TextFieldOptions { Placeholder, MaxLength, Password, Enabled }), Typing, Bar, Segments, Image, Tooltip, Prompt, BeginModal, EndModal, Hovered, Clicked, SetTheme, OnClick`.
 
 ### Text
-`Font::Pixel`, `TextStyle { Font, Size, Color, Align, Shadow, Outline, LineHeight }`, `Draw, Paragraph, Rich, Typewriter, Measure, Wrap, Layout`, `Number(v, suffix), Percent, Clock`, `SetLanguage, Language, Tr` (`lang/<code>.json`).
+`Font::Pixel`, `Font::Load / FromTtf` (TrueType y OpenType con `TtfOptions { Size, Smooth, Extra }`), `Font::FromAtlas`, `TextStyle { Font, Size, Color, Align, Shadow, Outline, LineHeight }`, `Draw, Paragraph, Rich, Typewriter, Measure, Wrap, Layout`, `Number(v, suffix), Percent, Clock`, `SetLanguage, Language, Tr` (`lang/<code>.json`).
 
 ### Platform
 Hecho (local, `platform.json` en `Files::SavePath`): `Platform::Name, Save`, `Unlock, Unlocked, Progress, ProgressOf, UnlockedOn, Achievements, ResetAchievements` + evento `AchievementUnlocked`, `Stat, SetStat, AddStat, MaxStat`, `ConfigureBoard, Submit, Top, Best, ClearBoard` (`LeaderboardEntry`, `LeaderboardOptions`), `OwnsDlc, Dlcs` (carpetas `dlc/<id>`). Con Steam (aparcado): `PlayerName, PlayerId`, `IsSteamDeck, ShowKeyboard`. Con internet (fase 16): marcadores online, `CloudSave, CloudLoad`, `SetPresence`, `CreateLobby, FindLobbies, JoinLobby, SetLobbyData, InviteFriends`. El SDK de Steamworks no va en el repositorio (`-DBITMOTOR_STEAM_SDK`).
@@ -98,7 +98,7 @@ Hecho (local, `platform.json` en `Files::SavePath`): `Platform::Name, Save`, `Un
 | 11 | Multijugador local | |
 | 12 | Compute + ShaderRenderer | **v1.2** |
 | 13 | Migrar RogueInvasion (depende de nyiengisprite) | |
-| 14 | 3D y extras aplazados: Models, Obj 3D, TTF, RenderTexture, Dropdown, TextField, Wipe/Slide | |
+| 14 | 3D y extras aplazados: Models, Obj 3D, TTF, RenderTexture, Dropdown, TextField, Wipe/Slide | Hecha |
 | 15 | BitMusic: la aplicación (hecha con BitMotor), BitMotor en web (Emscripten, renderer para el navegador) y widgets de tracker. El formato `.bitmusic` ya existe desde la fase 5 | |
 | 16 | Internet: Net online (Steam, lobbies, lockstep), red avanzada, y de Platform los marcadores online, la nube (`CloudSave`, `CloudLoad`) y la presencia | **v2.0** |
 

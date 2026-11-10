@@ -4,8 +4,10 @@
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Math/Functions.h"
 #include "Core/InputInternal.h"
+#include "Text/FontInternal.h"
 #include "UI/UiInternal.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <string>
@@ -67,6 +69,27 @@ struct UiState {
     bool InModal = false, ModalNow = false, ModalLast = false;
     int Dragging = -1;
     bool DraggingInModal = false;
+
+    // The open Dropdown: it takes every click and the navigation until it closes.
+    struct {
+        bool Open = false, Seen = false, InModal = false;
+        int Index = -1;
+        int Hot = 0, Selected = 0;
+        Rect List;
+        float Row = 0;
+        std::vector<std::string> Items;
+        bool Click = false;   // this frame's click, kept for it
+        bool Capture = false; // it was open when the frame started: the other widgets get no mouse
+    } Drop;
+    // The TextField being edited: it takes the keyboard until Enter, Escape or a click elsewhere.
+    struct {
+        bool Active = false, Seen = false, InModal = false;
+        int Index = -1;
+        int Caret = 0;    // in characters
+        double Since = 0; // the caret blinks from here
+    } Edit;
+    // The navigation the open Dropdown or the edited TextField gets instead of the rest.
+    std::array<bool, NavCount> Captured{};
 
     // The widget drawn last, for Tooltip.
     Rect LastArea;
@@ -202,6 +225,41 @@ void UpdateNavigation(float dt) {
     }
 }
 
+// The open Dropdown's list, over everything.
+void DrawDropList() {
+    const UI::Theme& look = Ui.Look;
+    const Rect list = Ui.Drop.List;
+    UI::Rect(list, look.Panel.WithAlpha(1));
+    UI::RectOutline(list, look.Accent);
+    for (std::size_t i = 0; i < Ui.Drop.Items.size(); ++i) {
+        Rect row(list.X + 1, list.Y + 1 + float(i) * Ui.Drop.Row, list.Width - 2, Ui.Drop.Row);
+        if (int(i) == Ui.Drop.Hot) UI::Rect(row, look.ButtonHover);
+        if (int(i) == Ui.Drop.Selected) UI::Rect({row.X, row.Y, 2, row.Height}, look.Accent);
+        Label(row, Ui.Drop.Items[i], look.Text.Color, Align::Left);
+    }
+}
+
+// Where the list of a dropdown goes: under it, or above if it does not fit below.
+Rect DropListArea(Rect box, std::size_t count, float row) {
+    const float height = float(count) * row + 2;
+    Rect list(box.X, box.Bottom() + 1, box.Width, height);
+    if (list.Bottom() > Screen::Height() && box.Y - height - 1 >= 0) list.Y = box.Y - height - 1;
+    return list;
+}
+
+std::size_t Characters(std::string_view text) { return Detail::Decode(text).size(); }
+
+// The UTF-8 text with `count` characters from `first` (in characters).
+std::string Slice(const std::u32string& text, std::size_t first, std::size_t count = std::u32string::npos) {
+    if (first >= text.size()) return {};
+    return Detail::Encode(std::u32string_view(text).substr(first, count));
+}
+
+void StopEditing() {
+    Ui.Edit.Active = false;
+    Detail::SetTextInput(false);
+}
+
 } // namespace
 
 namespace Detail {
@@ -219,11 +277,27 @@ void BeginUi() {
     Ui.RightClickTaken = false;
     UpdateNavigation(Time::RealDelta());
 
+    // An open Dropdown or an edited TextField keeps the input for itself: nothing else moves or is pressed.
+    Ui.Captured = {};
+    Ui.Drop.Click = false;
+    Ui.Drop.Capture = Ui.Drop.Open;
+    Ui.Drop.Seen = Ui.Edit.Seen = false;
+    const bool captured = Ui.Drop.Open || Ui.Edit.Active;
+    if (captured) {
+        Ui.Captured = Ui.Fired;
+        Ui.Fired = {};
+        if (Ui.Drop.Open && Ui.Click) {
+            Ui.Drop.Click = true;
+            Ui.ClickTaken = true;
+        }
+        Ui.RightClickTaken = Ui.Drop.Open;
+    }
+
     // The focus moves among last frame's widgets of the scope that has the input.
     Scope& scope = Active();
     Ui.Confirm = false;
     Ui.Adjust = 0;
-    if (scope.LastCount > 0 && Ui.KeyboardFocus) {
+    if (scope.LastCount > 0 && Ui.KeyboardFocus && !captured) {
         auto at = [&](Nav nav) { return Ui.Fired[std::size_t(nav)]; };
         bool adjustable =
             scope.Focus >= 0 && scope.Focus < scope.LastCount && scope.LastAdjustable[std::size_t(scope.Focus)];
@@ -250,6 +324,12 @@ void BeginUi() {
 
 void EndUi() {
     if (Ui.InModal) UI::EndModal();
+    if (Ui.Drop.Open && !Ui.Drop.Seen) Ui.Drop.Open = false; // its screen is gone
+    if (Ui.Edit.Active && !Ui.Edit.Seen) {
+        Ui.Edit.Active = false;
+        SetTextInput(false);
+    }
+    if (Ui.Drop.Open) DrawDropList();
     if (Ui.ModalNow && !Ui.ModalLast) Ui.Modal.Focus = 0; // a window that just opened starts at its first widget
     Ui.ModalLast = Ui.ModalNow;
     for (Scope* s : {&Ui.Screen, &Ui.Modal}) {
@@ -263,7 +343,8 @@ void EndUi() {
     TextStyle style = Style(look.Text.Color);
     if (look.TooltipLineHeight > 0) style.LineHeight = look.TooltipLineHeight;
     Vec2 size = Text::Measure(Ui.Tip, style, look.TooltipWidth);
-    Rect box(Ui.TipAt + (Ui.TipBelow ? Vec2(0, 2) : look.TooltipOffset), size + Vec2(look.Padding * 2, look.Padding * 2));
+    Rect box(Ui.TipAt + (Ui.TipBelow ? Vec2(0, 2) : look.TooltipOffset),
+             size + Vec2(look.Padding * 2, look.Padding * 2));
     box.X = Clamp(box.X, 0.0f, Max(0.0f, Screen::Width() - box.Width));
     box.Y = Clamp(box.Y, 0.0f, Max(0.0f, Screen::Height() - box.Height));
     if (!Ui.TipBelow && box.Contains(Ui.Mouse)) box.Y = Max(0.0f, Ui.TipAt.Y - box.Height - 4); // not under the cursor
@@ -281,7 +362,7 @@ namespace UI {
 void SetTheme(const Theme& theme) { Ui.Look = theme; }
 const Theme& GetTheme() { return Ui.Look; }
 
-bool Hovered(BitMotor::Rect area) { return Live() && area.Contains(Ui.Mouse); }
+bool Hovered(BitMotor::Rect area) { return Live() && !Ui.Drop.Capture && area.Contains(Ui.Mouse); }
 
 bool Clicked(BitMotor::Rect area) {
     if (!Ui.Click || Ui.ClickTaken || !Hovered(area)) return false;
@@ -387,7 +468,8 @@ bool Button(BitMotor::Rect area, std::string_view label, Color tint, bool enable
     bool pressed, hovered, focused;
     const bool lit = Press(area, enabled, pressed, hovered, focused);
     const Color frame = !enabled ? look.Faint : lit ? look.TextHover : tint;
-    if (look.ButtonImage) DrawNineSlice(area, look.ButtonImage, look.ImageBorder, frame);
+    if (look.ButtonImage)
+        DrawNineSlice(area, look.ButtonImage, look.ImageBorder, frame);
     else {
         UI::Rect(area, look.Button);
         UI::RectOutline(area, frame);
@@ -574,6 +656,278 @@ void BeginModal() {
 }
 
 void EndModal() { Ui.InModal = false; }
+
+bool Dropdown(BitMotor::Rect area, std::string_view label, int& selected, std::span<const std::string> options,
+              bool enabled) {
+    const Theme& look = Ui.Look;
+    const int count = int(options.size());
+    const int before = selected;
+    if (count > 0) selected = Clamp(selected, 0, count - 1);
+    BitMotor::Rect box = label.empty() ? area
+                                       : BitMotor::Rect(area.X + std::floor(area.Width * 0.5f), area.Y,
+                                                        area.Width - std::floor(area.Width * 0.5f), area.Height);
+    bool focused = false, hovered = false;
+    if (enabled && count > 0) {
+        const int index = Register(true, focused);
+        auto& drop = Ui.Drop;
+        const bool open = drop.Open && drop.Index == index && drop.InModal == Ui.InModal;
+        if (open) {
+            drop.Seen = true;
+            focused = true;
+            drop.Row = std::floor(Max(area.Height - 2, CapHeight(Style(look.Text.Color)) + 4));
+            drop.List = DropListArea(box, options.size(), drop.Row);
+            drop.Items.assign(options.begin(), options.end());
+            drop.Selected = selected;
+            auto rowAt = [&](Vec2 point) {
+                if (!drop.List.Contains(point)) return -1;
+                return Clamp(int((point.Y - drop.List.Y - 1) / drop.Row), 0, count - 1);
+            };
+            if (Ui.MouseMoved)
+                if (int row = rowAt(Ui.Mouse); row >= 0) drop.Hot = row;
+            auto nav = [&](Nav n) { return Ui.Captured[std::size_t(n)]; };
+            if (nav(Nav::Up)) drop.Hot = (drop.Hot + count - 1) % count;
+            if (nav(Nav::Down)) drop.Hot = (drop.Hot + 1) % count;
+            Ui.ShowFocus = Ui.ShowFocus || nav(Nav::Up) || nav(Nav::Down);
+            if (drop.Click) {
+                if (int row = rowAt(Ui.Mouse); row >= 0) selected = row;
+                drop.Open = false;
+                Fire();
+            } else if (nav(Nav::Confirm)) {
+                selected = drop.Hot;
+                drop.Open = false;
+                Fire();
+            } else if (nav(Nav::Back)) {
+                drop.Open = false;
+            }
+            drop.Selected = selected;
+            hovered = box.Contains(Ui.Mouse);
+        } else {
+            hovered = Hovered(area);
+            Hover(index, hovered);
+            if (hovered) focused = Live() && index == Current().Focus;
+            if (Clicked(area) || (focused && Ui.Confirm)) {
+                drop.Open = true;
+                drop.Seen = true;
+                drop.InModal = Ui.InModal;
+                drop.Index = index;
+                drop.Hot = selected;
+                drop.Selected = selected;
+                drop.Row = std::floor(Max(area.Height - 2, CapHeight(Style(look.Text.Color)) + 4));
+                drop.List = DropListArea(box, options.size(), drop.Row);
+                drop.Items.assign(options.begin(), options.end());
+                Current().Focus = index;
+                Fire();
+            } else if (focused && Ui.Adjust != 0) {
+                selected = (selected + Ui.Adjust + count) % count;
+                Fire();
+            }
+        }
+    } else {
+        Swallow(area);
+    }
+    const bool lit = hovered || (focused && Ui.ShowFocus);
+    if (!label.empty()) {
+        if (lit) UI::Rect(area, look.ButtonHover.WithAlpha(0.5f));
+        Label({area.X, area.Y, area.Width * 0.5f, area.Height}, label, enabled ? look.Text.Color : look.TextDisabled,
+              Align::Left);
+    }
+    BitMotor::Rect field = label.empty() ? box : box.Expand(-1);
+    Box(field, look.ButtonImage, lit ? look.ButtonHover : look.Button,
+        focused && Ui.ShowFocus ? look.Accent : look.Border);
+    const Color text = enabled ? look.Text.Color : look.TextDisabled;
+    if (count > 0)
+        Label({field.X, field.Y, field.Width - 8, field.Height}, options[std::size_t(selected)], text, Align::Left);
+    // A small arrow at the right end.
+    const float arrowX = field.Right() - look.Padding - 5, arrowY = std::floor(field.Y + field.Height * 0.5f) - 1;
+    for (int i = 0; i < 3; ++i) UI::Rect({arrowX + float(i), arrowY + float(i), float(5 - 2 * i), 1}, text);
+    Remember(area, hovered, focused);
+    return selected != before;
+}
+
+bool Dropdown(BitMotor::Rect area, std::string_view label, int& selected,
+              std::initializer_list<std::string_view> options, bool enabled) {
+    std::vector<std::string> items(options.begin(), options.end());
+    return Dropdown(area, label, selected, std::span<const std::string>(items), enabled);
+}
+
+bool TextField(BitMotor::Rect area, std::string_view label, std::string& text, const TextFieldOptions& options) {
+    const Theme& look = Ui.Look;
+    const std::string before = text;
+    BitMotor::Rect box = label.empty() ? area
+                                       : BitMotor::Rect(area.X + std::floor(area.Width * 0.5f), area.Y,
+                                                        area.Width - std::floor(area.Width * 0.5f), area.Height);
+    const TextStyle style = Style(options.Enabled ? look.Text.Color : look.TextDisabled);
+    const float left = box.X + look.Padding, room = Max(1.0f, box.Width - look.Padding * 2);
+    std::u32string letters = Detail::Decode(text);
+    auto& edit = Ui.Edit;
+    bool focused = false, hovered = false, active = false;
+
+    // The character nearest to an x on screen, given the first one shown.
+    auto caretAt = [&](float x, std::size_t first) {
+        std::size_t best = first;
+        float bestDistance = 1e9f;
+        for (std::size_t i = first; i <= letters.size(); ++i) {
+            float at = left + Text::Measure(Slice(letters, first, i - first), style).X;
+            if (i > first) at += 1; // Measure ends at the last pixel; the caret goes after it
+            if (float distance = std::abs(at - x); distance < bestDistance) {
+                bestDistance = distance;
+                best = i;
+            }
+        }
+        return int(best);
+    };
+    // The first character shown: the end of the text (and the caret) must fit in the box.
+    auto firstShown = [&](int caret) {
+        std::size_t first = 0;
+        while (first < std::size_t(caret) &&
+               Text::Measure(Slice(letters, first, std::size_t(caret) - first), style).X > room - 2)
+            ++first;
+        return first;
+    };
+
+    if (options.Enabled) {
+        const int index = Register(false, focused);
+        const bool editing = edit.Active && edit.Index == index && edit.InModal == Ui.InModal;
+        if (editing) {
+            edit.Seen = true;
+            focused = true;
+            hovered = box.Contains(Ui.Mouse);
+            edit.Caret = Clamp(edit.Caret, 0, int(letters.size()));
+            const bool ctrl = Detail::FrameDown(Key::LeftCtrl) || Detail::FrameDown(Key::RightCtrl);
+            bool done = false, moved = false;
+            auto insert = [&](std::u32string_view add) {
+                for (char32_t c : add) {
+                    if (c < 0x20 || c == 0x7F) continue; // control characters
+                    if (options.MaxLength > 0 && int(letters.size()) >= options.MaxLength) break;
+                    letters.insert(letters.begin() + edit.Caret, c);
+                    ++edit.Caret;
+                }
+                moved = true;
+            };
+            for (Key key : Detail::FrameKeys()) {
+                switch (key) {
+                case Key::Backspace:
+                    if (edit.Caret > 0) letters.erase(std::size_t(--edit.Caret), 1);
+                    moved = true;
+                    break;
+                case Key::Delete:
+                    if (edit.Caret < int(letters.size())) letters.erase(std::size_t(edit.Caret), 1);
+                    moved = true;
+                    break;
+                case Key::Left:
+                    edit.Caret = Max(0, edit.Caret - 1);
+                    moved = true;
+                    break;
+                case Key::Right:
+                    edit.Caret = Min(int(letters.size()), edit.Caret + 1);
+                    moved = true;
+                    break;
+                case Key::Home:
+                case Key::Up:
+                    edit.Caret = 0;
+                    moved = true;
+                    break;
+                case Key::End:
+                case Key::Down:
+                    edit.Caret = int(letters.size());
+                    moved = true;
+                    break;
+                case Key::Enter:
+                case Key::KeypadEnter:
+                case Key::Escape:
+                    done = true;
+                    break;
+                case Key::V:
+                    if (ctrl) insert(Detail::Decode(Detail::ClipboardText()));
+                    break;
+                case Key::C:
+                    if (ctrl) Detail::SetClipboardText(Detail::Encode(letters));
+                    break;
+                default:
+                    break;
+                }
+            }
+            if (!ctrl) insert(Detail::Decode(Detail::FrameText()));
+            // The gamepad (it has no keyboard): Confirm or Back finish.
+            if (Ui.Captured[std::size_t(Nav::Confirm)] && !Detail::FrameDown(Key::Space) &&
+                !Detail::FrameDown(Key::Enter))
+                done = true;
+            if (Ui.Captured[std::size_t(Nav::Back)] && !Detail::FrameDown(Key::Backspace) &&
+                !Detail::FrameDown(Key::Escape))
+                done = true;
+            if (Ui.Click) {
+                if (box.Contains(Ui.Mouse)) {
+                    edit.Caret = caretAt(Ui.Mouse.X, firstShown(edit.Caret));
+                    moved = true;
+                    if (!Ui.ClickTaken) Ui.ClickTaken = true;
+                } else {
+                    done = true; // the click is free for what is under it
+                }
+            }
+            if (moved) edit.Since = Time::RealTotal();
+            text = Detail::Encode(letters);
+            if (done) StopEditing();
+            active = !done;
+        } else {
+            hovered = Hovered(box);
+            Hover(index, hovered);
+            if (hovered) focused = Live() && index == Current().Focus;
+            const bool click = Clicked(box);
+            if (click || (focused && Ui.Confirm)) {
+                edit.Active = true;
+                edit.Seen = true;
+                edit.InModal = Ui.InModal;
+                edit.Index = index;
+                edit.Caret = click ? caretAt(Ui.Mouse.X, 0) : int(letters.size());
+                edit.Since = Time::RealTotal();
+                Current().Focus = index;
+                Detail::SetTextInput(true);
+                active = true;
+                Fire();
+            }
+        }
+    } else {
+        Swallow(box);
+    }
+
+    const bool lit = hovered || (focused && Ui.ShowFocus) || active;
+    if (!label.empty()) {
+        if (hovered || (focused && Ui.ShowFocus)) UI::Rect(area, look.ButtonHover.WithAlpha(0.5f));
+        Label({area.X, area.Y, area.Width * 0.5f, area.Height}, label, style.Color, Align::Left);
+    }
+    BitMotor::Rect field = label.empty() ? box : box.Expand(-1);
+    UI::Rect(field, look.BarBack);
+    UI::RectOutline(field, active || (focused && Ui.ShowFocus) ? look.Accent : lit ? look.Text.Color : look.Border);
+
+    const float y = std::floor(field.Y + field.Height * 0.5f - std::floor((CapHeight(style) - 1) * 0.5f));
+    letters = Detail::Decode(text);
+    if (letters.empty() && !active) {
+        if (!options.Placeholder.empty()) {
+            TextStyle hint = style;
+            hint.Color = look.TextDisabled;
+            Text::Draw(options.Placeholder, {left, y}, hint);
+        }
+    } else {
+        const int caret = active ? Clamp(edit.Caret, 0, int(letters.size())) : int(letters.size());
+        const std::size_t first = active ? firstShown(caret) : 0;
+        // As many characters from `first` as fit.
+        std::size_t shown = letters.size() - first;
+        while (shown > 0 && Text::Measure(Slice(letters, first, shown), style).X > room) --shown;
+        std::string visible = Slice(letters, first, shown);
+        if (options.Password) visible = std::string(Characters(visible), '*');
+        Text::Draw(visible, {left, y}, style);
+        if (active && std::fmod(Time::RealTotal() - edit.Since, 1.0) < 0.5) {
+            std::string head = Slice(letters, first, std::size_t(caret) - first);
+            if (options.Password) head = std::string(Characters(head), '*');
+            float x = left + (head.empty() ? 0.0f : Text::Measure(head, style).X + 1);
+            UI::Rect({x, y - 1, 1, CapHeight(style) + 2}, look.Accent);
+        }
+    }
+    Remember(area, hovered, focused);
+    return text != before;
+}
+
+bool Typing() { return Ui.Edit.Active; }
 
 bool Pressed(Nav nav) { return Ui.Fired[std::size_t(nav)]; }
 

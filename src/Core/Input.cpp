@@ -67,6 +67,10 @@ struct State {
     bool MouseForced = false; // Input::ForceMouse: the real mouse is ignored
     std::vector<ActionData> Actions;
 
+    // Typing, since the previous frame and in this one.
+    std::string PendingText, FrameText;
+    std::vector<Key> PendingKeys, FrameKeys;
+
     int RebindAction = -1;
     bool RebindEnded = false, FrameRebindEnded = false; // the key that ends a Rebind must not reach the UI
 
@@ -190,6 +194,7 @@ void InputKey(Key key, bool down) {
     if (key == Key::Unknown || key >= Key::Count) return;
     Now.Keys[std::size_t(key)].Set(down);
     if (!down) return;
+    Now.PendingKeys.push_back(key);
     Now.UsingGamepad = false;
     if (Now.RebindAction >= 0) {
         if (key == Key::Escape)
@@ -198,6 +203,15 @@ void InputKey(Key key, bool down) {
             Assign(key);
     }
 }
+
+void InputKeyRepeat(Key key) {
+    if (key != Key::Unknown && key < Key::Count) Now.PendingKeys.push_back(key);
+}
+
+void InputText(std::string_view utf8) { Now.PendingText += utf8; }
+
+const std::string& FrameText() { return Now.FrameText; }
+const std::vector<Key>& FrameKeys() { return Now.FrameKeys; }
 
 void InputMouseButton(MouseButton button, bool down) {
     if (button >= MouseButton::Count) return;
@@ -256,6 +270,8 @@ void InputFrame() {
     Now.FrameMouseStart = Now.MousePosition;
     Now.FrameWheel = std::exchange(Now.FramePendingWheel, 0.0f);
     Now.FrameRebindEnded = std::exchange(Now.RebindEnded, false);
+    Now.FrameText = std::exchange(Now.PendingText, std::string());
+    Now.FrameKeys = std::exchange(Now.PendingKeys, std::vector<Key>());
     Now.AnalogPreviousFrame = Now.AnalogFrame;
     for (std::size_t b = 0; b < Now.AnalogFrame.size(); ++b) Now.AnalogFrame[b] = Analog(Button(b)) >= DownThreshold;
 }

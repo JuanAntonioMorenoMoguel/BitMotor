@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -36,6 +38,23 @@ char32_t Fallback(char32_t character);
 
 // A white pixel inside the built-in font's texture: shapes use it, so text and shapes share one batch.
 const Region& WhitePixel();
+
+// A TrueType font rasterised (TtfFont.cpp): its letters packed in one RGBA image (white, the coverage in
+// alpha) and where each one is. Kept apart from the texture so the tests can check it without a GPU.
+struct BakedGlyph {
+    char32_t Character = 0;
+    Rect Area;
+    Vec2 Offset;
+    float Advance = 0;
+};
+struct BakedFont {
+    int Width = 0, Height = 0;
+    std::vector<std::uint8_t> Pixels;
+    std::vector<BakedGlyph> Glyphs;
+    float CapHeight = 0, LineHeight = 0, Space = 0;
+};
+// False (and why in `error`) if the bytes are not a font it can read.
+bool BakeTtf(std::span<const std::uint8_t> bytes, const TtfOptions& options, BakedFont& out, std::string& error);
 
 // UTF-8 -> code points. Invalid bytes become U+FFFD.
 std::u32string Decode(std::string_view text);

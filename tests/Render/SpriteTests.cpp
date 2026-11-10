@@ -3,7 +3,9 @@
 
 #include "BitMotor/Core/Time.h"
 #include "BitMotor/Math/Functions.h"
+#include "BitMotor/Render/RenderTexture.h"
 #include "Core/TimeInternal.h"
+#include "Render/RendererInternal.h"
 #include "Render/SpritesInternal.h"
 
 using namespace BitMotor;
@@ -145,4 +147,48 @@ TEST(DrawQueuesUntilTheFrameResets) {
     Detail::ResetSprites();
     CHECK(Detail::SpriteQueue().empty());
     CHECK_EQ(CurrentCamera().Zoom, 1.0f);
+}
+
+TEST(RenderTexturesTakeTheirOwnDraws) {
+    Detail::ResetSprites();
+    RenderTexture minimap = RenderTexture::Create(64, 32);
+    CHECK(minimap);
+    CHECK_EQ(minimap.Size(), Vec2(64, 32));
+    CHECK(minimap.Source().Internal()->Target);
+    CHECK(!RenderTexture::Create(0, 10));
+    Texture dot = Solid(2);
+    Screen::Draw(Sprite2D{.Region = dot.Full(), .Position = {1, 1}, .Layer = Layer::Hud});
+    minimap.Begin(Colors::Black);
+    // Inside: the camera is centred on the texture, so the World lines up with its pixels.
+    CHECK(Near(CurrentCamera().ToScreen({5, 6}), {5, 6}));
+    Screen::Draw(Sprite2D{.Region = dot.Full(), .Position = {5, 6}});
+    Screen::Draw(Sprite2D{.Region = dot.Full(), .Position = {7, 8}, .Layer = Layer::Hud});
+    RenderTexture other = RenderTexture::Create(8, 8);
+    other.Begin(); // one at a time: refused
+    CHECK_EQ(Detail::TargetDraws().size(), 1u);
+    minimap.End();
+    CHECK_EQ(Detail::SpriteQueue().size(), 1u); // the screen kept its own
+    Screen::Draw(Sprite2D{.Region = dot.Full(), .Position = {2, 2}, .Layer = Layer::Hud});
+    CHECK_EQ(Detail::SpriteQueue().size(), 2u);
+    const Detail::TargetDraw& draw = Detail::TargetDraws()[0];
+    CHECK(draw.Target == minimap.Source());
+    CHECK(draw.Clear);
+    CHECK_EQ(draw.ClearColor, Colors::Black);
+    CHECK_EQ(draw.Queue.size(), 2u);
+    CHECK(Near({draw.Queue[0].Instance.X, draw.Queue[0].Instance.Y}, {5, 6}));
+    // Continue keeps the image; Screen::Clear inside clears the texture, not the screen.
+    minimap.Continue();
+    Screen::Draw(Sprite2D{.Region = dot.Full(), .Position = {1, 1}});
+    CHECK(!Detail::TargetDraws()[1].Clear);
+    Screen::Clear(Colors::Navy);
+    CHECK(Detail::TargetDraws()[1].Clear);
+    CHECK_EQ(Detail::TargetDraws()[1].ClearColor, Colors::Navy);
+    minimap.End();
+    CHECK(Detail::TargetDraws()[1].Queue.empty());
+    CHECK_EQ(Detail::SpriteQueue().size(), 2u);
+    // The sprite of the texture itself draws like any other.
+    Screen::Draw(Sprite2D{.Region = minimap.Full(), .Position = {200, 10}, .Layer = Layer::Hud});
+    CHECK_EQ(Detail::SpriteQueue().size(), 3u);
+    Detail::ResetSprites();
+    CHECK(Detail::TargetDraws().empty());
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include "BitMotor/Colors/Color.h"
+#include "BitMotor/Math/Shapes.h"
 #include "BitMotor/Render/Texture.h"
 
 #include <cstdint>
@@ -31,8 +32,10 @@ void EndFrame2D();
 
 // What Screen asks for: they only record the request, which runs in EndFrame2D.
 void ClearScreen(Color color);
-// Covers the whole logical screen with `color`, blending by its alpha (scene fades).
+// Covers the whole logical screen with `color`, blending by its alpha (scene fades), or an area of it
+// (logical pixels: scene wipes).
 void FillScreen(Color color);
+void FillArea(const Rect& area, Color color);
 void RequestScreenshot(const std::filesystem::path& path);
 
 // The image behind a Texture. Its pixels wait in memory until there is a GPU device, then go up and are
@@ -44,6 +47,8 @@ struct TextureData {
     SDL_GPUTexture* Gpu = nullptr;
     // Its normal map (Texture::SetNormals), for the World layer's lighting. Empty: flat.
     Texture Normals;
+    // A RenderTexture's: the GPU image is made empty (cleared to transparent) and drawn into, never uploaded.
+    bool Target = false;
 
     TextureData();
     ~TextureData();

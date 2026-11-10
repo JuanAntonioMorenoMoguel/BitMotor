@@ -3,13 +3,16 @@
 A C++20 library to make simple games. It unifies nyiengilib and is the base that ProjectEGIDA, MONOCHROME and
 RogueInvasion will migrate to. The full design (modules, API and roadmap) is in [docs/BitMotor.md](docs/BitMotor.md).
 
-> **Status: phase 7 done (v1.0 of the plan).** Core (phase 1), architecture (2: Services, Scenes, Managers, Tasks, Settings),
+> **Status: the engine is complete.** Core (phase 1), architecture (2: Services, Scenes, Managers, Tasks, Settings),
 > 2D rendering (3: SDL_GPU, sprites, atlas, camera, lighting, particles), text and UI (4: fonts, Rich text,
-> Typewriter, translations with `Tr`, shapes and immediate widgets) and audio (5: sounds from files or
-> functions, music with crossfades, procedural music and BitMusic songs, see [docs/BitMusic.md](docs/BitMusic.md)) and
-> custom renderers (7: `CustomRenderer` with its own GLSL shaders, pipelines, buffers and targets on SDL_GPU,
-> `BitMotor_Shaders` in CMake, and the debug panel with Dear ImGui: F1 or `--debug`).
-> Phase 6 (Platform) is parked for now.
+> Typewriter, translations with `Tr`, shapes and immediate widgets), audio (5: sounds from files or
+> functions, music with crossfades, procedural music and BitMusic songs, see [docs/BitMusic.md](docs/BitMusic.md)),
+> local Platform (6: achievements, stats, local leaderboards, DLC folders), custom renderers (7: `CustomRenderer`
+> with its own GLSL shaders, pipelines, buffers and targets on SDL_GPU, compute shaders, hot reload of shaders in
+> Debug, `BitMotor_Shaders` in CMake, and the debug panel with Dear ImGui: F1 or `--debug`), basic 3D and the
+> extras (14: TrueType fonts with `Font::Load`, `RenderTexture`, `UI::Dropdown`, `UI::TextField` and the `Wipe` and
+> `Slide` scene transitions; see `examples/13_Extras`).
+> Not included: Steam, local multiplayer and online features.
 
 ## Drawing your own way
 

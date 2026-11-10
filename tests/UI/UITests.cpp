@@ -297,7 +297,7 @@ TEST(KeyboardFocusCanBeTurnedOff) {
     Frame([&] { UI::Button(First, "One"); });
     Tap(Key::Enter);
     Frame([&] { pressed = UI::Button(First, "One"); });
-    CHECK(!pressed);           // Enter is the game's
+    CHECK(!pressed);                  // Enter is the game's
     CHECK(UI::Pressed(Nav::Confirm)); // still readable
     UI::SetKeyboardFocus(true);
     Fresh();
@@ -354,12 +354,12 @@ TEST(TintedWidgetsTakeTheirColour) {
     const Color amber = Color::Hex(0xFFB447);
     Detail::InputMouseMove({200, 200});
     Frame([&] { UI::Button(First, "SCRAM", amber); });
-    CHECK(Queued(amber));                            // frame and label
+    CHECK(Queued(amber)); // frame and label
     CHECK(!Queued(UI::GetTheme().TextHover));
     Detail::InputMouseMove({20, 15});
     Frame([&] { UI::Button(First, "SCRAM", amber); });
-    CHECK(Queued(UI::GetTheme().TextHover));         // pointed at: the hover colour
-    CHECK(Queued(amber.WithAlpha(0.18f)));           // and a faint fill inside
+    CHECK(Queued(UI::GetTheme().TextHover)); // pointed at: the hover colour
+    CHECK(Queued(amber.WithAlpha(0.18f)));   // and a faint fill inside
     Frame([&] { UI::Button(First, "SCRAM", amber, false); });
     CHECK(Queued(UI::GetTheme().Faint));
     CHECK(!Queued(amber));
@@ -367,7 +367,7 @@ TEST(TintedWidgetsTakeTheirColour) {
     CHECK(Queued(amber.WithAlpha(0.25f)));
     Detail::InputMouseMove({200, 200});
     Frame([&] { UI::FlatButton(First, "+1000", amber); });
-    CHECK(Queued(amber.WithAlpha(0.7f)));            // the outline, dimmer when not pointed at
+    CHECK(Queued(amber.WithAlpha(0.7f))); // the outline, dimmer when not pointed at
 }
 
 TEST(TintedPanelsDrawTheirTitle) {
@@ -466,4 +466,150 @@ TEST(ForcedMouseDrivesTheUi) {
     CHECK(pressed);
     Input::ReleaseMouse();
     CHECK(!Input::MouseForced());
+}
+
+TEST(DropdownsOpenAndChoose) {
+    Fresh();
+    const Rect area{10, 10, 120, 12};
+    int choice = 0;
+    bool changed = false, button = false;
+    auto menu = [&] {
+        changed = UI::Dropdown(area, "Language", choice, {"Spanish", "English", "French"});
+        button = UI::Button({10, 30, 120, 12}, "Under the list");
+    };
+    Frame(menu);
+    // Left/Right go through the options while it is closed.
+    Tap(Key::Right);
+    Frame(menu);
+    CHECK(changed);
+    CHECK_EQ(choice, 1);
+    Tap(Key::Left);
+    Tap(Key::Left); // wraps around... once per frame: two taps in a frame are one press
+    Frame(menu);
+    CHECK_EQ(choice, 0);
+    // A click on the box opens the list (rows of 11 pixels from y = 24, on the right half); the button under
+    // it gets nothing.
+    Click({100, 15});
+    Frame(menu);
+    CHECK(!changed);
+    Click({100, 38}); // the second row, over the button
+    Frame(menu);
+    CHECK(changed);
+    CHECK_EQ(choice, 1);
+    CHECK(!button);
+    // With the keyboard: Confirm opens, Down moves, Confirm chooses; the focus does not move meanwhile.
+    Tap(Key::Enter);
+    Frame(menu);
+    Tap(Key::Down);
+    Frame(menu);
+    CHECK_EQ(UI::Focus(), 0);
+    Tap(Key::Enter);
+    Frame(menu);
+    CHECK(changed);
+    CHECK_EQ(choice, 2);
+    // Back closes it without choosing, and UI::Pressed does not see the Back meanwhile.
+    Tap(Key::Enter);
+    Frame(menu);
+    Tap(Key::Down);
+    Frame(menu);
+    Tap(Key::Escape);
+    bool back = true;
+    Frame([&] {
+        menu();
+        back = UI::Pressed(Nav::Back);
+    });
+    CHECK(!back);
+    CHECK(!changed);
+    CHECK_EQ(choice, 2);
+    // Closed again: Down moves the focus to the button.
+    Tap(Key::Down);
+    Frame(menu);
+    CHECK_EQ(UI::Focus(), 1);
+    // A click outside closes it and does not reach what is under.
+    Click({100, 15});
+    Frame(menu);
+    Click({20, 33});
+    Frame(menu);
+    CHECK(!button);
+    CHECK_EQ(choice, 2);
+    Click({20, 33});
+    Frame(menu);
+    CHECK(button);
+}
+
+TEST(TextFieldsTakeTyping) {
+    Fresh();
+    const Rect area{10, 10, 200, 12};
+    std::string name = "Ana";
+    bool changed = false, typing = false, nav = false;
+    auto form = [&] {
+        changed = UI::TextField(area, "Name", name, {.MaxLength = 6});
+        typing = UI::Typing();
+        nav = UI::Pressed(Nav::Down) || UI::Pressed(Nav::Confirm);
+    };
+    Frame(form);
+    CHECK(!typing);
+    // Confirm on the focused field starts typing at the end.
+    Tap(Key::Enter);
+    Frame(form);
+    CHECK(typing);
+    Detail::InputText("ís");
+    Frame(form);
+    CHECK(changed);
+    CHECK_EQ(name, "Anaís");
+    // Keys edit, and S (Down in the navigation) or Space reach neither the focus nor UI::Pressed.
+    Tap(Key::Left);
+    Tap(Key::Backspace);
+    Detail::InputKey(Key::S, true);
+    Detail::InputText("s");
+    Frame(form);
+    CHECK(!nav);
+    CHECK_EQ(name, "Anass");
+    Detail::InputKey(Key::S, false);
+    // The limit, in characters (not bytes).
+    Detail::InputText("xyz");
+    Frame(form);
+    CHECK_EQ(name, "Anasxs");
+    Tap(Key::Home);
+    Tap(Key::Delete);
+    Frame(form);
+    CHECK_EQ(name, "nasxs");
+    // Auto-repeated keys count too.
+    Detail::InputKeyRepeat(Key::Delete);
+    Detail::InputKeyRepeat(Key::Delete);
+    Frame(form);
+    CHECK_EQ(name, "sxs");
+    // Control characters are not typed; Enter finishes.
+    Detail::InputText("\t");
+    Tap(Key::Enter);
+    Frame(form);
+    CHECK(!typing);
+    CHECK_EQ(name, "sxs");
+    // A click inside starts typing; a click elsewhere stops it, and reaches what is there.
+    Click({150, 15});
+    Frame(form);
+    CHECK(typing);
+    bool button = false;
+    Click({20, 40});
+    Frame([&] {
+        form();
+        button = UI::Button({10, 35, 60, 12}, "Other");
+    });
+    CHECK(!typing);
+    CHECK(button);
+}
+
+TEST(TextFieldsStopWhenTheyAreGone) {
+    Fresh();
+    std::string text;
+    Frame([&] { UI::TextField({10, 10, 100, 12}, {}, text, {.Placeholder = "..."}); });
+    Tap(Key::Enter);
+    Frame([&] { UI::TextField({10, 10, 100, 12}, {}, text); });
+    CHECK(UI::Typing());
+    Frame([] {}); // its screen closed
+    CHECK(!UI::Typing());
+    // Disabled: no typing.
+    Tap(Key::Enter);
+    Frame([&] { UI::TextField({10, 10, 100, 12}, {}, text, {.Enabled = false}); });
+    CHECK(!UI::Typing());
 }

@@ -53,6 +53,7 @@ public:
     Detail::TextureData* Internal() const { return Data.get(); }
 
 private:
+    friend class RenderTexture;
     std::shared_ptr<Detail::TextureData> Data;
 };
 

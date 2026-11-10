@@ -2,6 +2,7 @@
 
 #include "BitMotor/Core/Events.h"
 #include "BitMotor/Core/Log.h"
+#include "BitMotor/Core/Screen.h"
 #include "BitMotor/Core/Time.h"
 #include "Core/ScenesInternal.h"
 #include "Render/RendererInternal.h"
@@ -75,6 +76,11 @@ std::vector<Request> Pending;
 Fade Phase = Fade::None;
 float FadeTime = 0, FadeHalf = 0;
 Color FadeTint = Colors::Black;
+Transition::Style FadeLook = Transition::Style::Fade;
+Transition::Side FadeSide = Transition::Left;
+// A Slide waits for one frame of the old scene to be drawn (the renderer keeps it), then changes.
+bool SlideDrawn = false;
+float SlideSeconds = 0;
 
 void PopTop() {
     std::unique_ptr<Scene> top = std::move(Stack.back());
@@ -108,12 +114,20 @@ void Apply(Request& request) {
 }
 
 void StartFadeOut(const Transition& look) {
-    // From a fade coming in, it turns round from the current darkness instead of jumping.
-    float alpha = Phase == Fade::In && FadeHalf > 0 ? 1.0f - FadeTime / FadeHalf : 0.0f;
+    // From a fade coming in, it turns round from the current darkness instead of jumping (a wipe or a
+    // slide starts over).
+    const bool turn = Phase == Fade::In && FadeHalf > 0 && FadeLook == Transition::Style::Fade &&
+                      look.Look == Transition::Style::Fade;
+    const float alpha = turn ? 1.0f - FadeTime / FadeHalf : 0.0f;
     Phase = Fade::Out;
-    FadeHalf = look.Seconds * 0.5f;
-    FadeTime = alpha * FadeHalf;
+    FadeLook = look.Look;
+    FadeSide = look.Towards;
     FadeTint = look.Tint;
+    SlideDrawn = false;
+    // A slide has no covering half: it is all movement, after the change.
+    FadeHalf = look.Look == Transition::Style::Slide ? 0.0f : look.Seconds * 0.5f;
+    FadeTime = alpha * FadeHalf;
+    if (look.Look == Transition::Style::Slide) SlideSeconds = look.Seconds;
 }
 
 // Applies the pending requests in order. A request with a fade stops there and starts fading out, unless
@@ -166,11 +180,16 @@ void ApplySceneChanges() {
 void UpdateScenes() {
     const float dt = Time::Delta();
     if (Phase == Fade::Out) {
-        FadeTime += dt;
-        if (FadeTime < FadeHalf) return; // nothing updates while the screen goes dark
+        if (FadeLook == Transition::Style::Slide) {
+            if (!SlideDrawn) return; // the old scene still has to be drawn once
+        } else {
+            FadeTime += dt;
+            if (FadeTime < FadeHalf) return; // nothing updates while the screen is covered
+        }
         ApplyPending(true);
         Phase = Fade::In;
         FadeTime = 0;
+        if (FadeLook == Transition::Style::Slide) FadeHalf = SlideSeconds;
         return;
     }
     if (Phase == Fade::In) {
@@ -187,7 +206,36 @@ void UpdateScenes() {
 void DrawScenes() {
     if (!Stack.empty())
         for (std::size_t i = Lowest(SceneAccess::DrawsBelow); i < Stack.size(); ++i) SceneAccess::Draw(*Stack[i]);
-    if (float alpha = SceneFade(); alpha > 0) FillScreen(FadeTint.WithAlpha(FadeTint.A * alpha));
+    if (Phase == Fade::Out && FadeLook == Transition::Style::Slide) SlideDrawn = true;
+    const float amount = SceneFade();
+    if (amount <= 0) return;
+    if (FadeLook == Transition::Style::Fade) {
+        FillScreen(FadeTint.WithAlpha(FadeTint.A * amount));
+        return;
+    }
+    // A wipe: covering from the side it leaves while going out, uncovering towards the side it goes to.
+    const Vec2 size = Screen::Size();
+    const bool out = Phase == Fade::Out;
+    Rect area(0, 0, size.X, size.Y);
+    switch (FadeSide) {
+    case Transition::Right:
+        area.Width = size.X * amount;
+        area.X = out ? 0 : size.X - area.Width;
+        break;
+    case Transition::Left:
+        area.Width = size.X * amount;
+        area.X = out ? size.X - area.Width : 0;
+        break;
+    case Transition::Down:
+        area.Height = size.Y * amount;
+        area.Y = out ? 0 : size.Y - area.Height;
+        break;
+    case Transition::Up:
+        area.Height = size.Y * amount;
+        area.Y = out ? size.Y - area.Height : 0;
+        break;
+    }
+    FillArea(area, FadeTint);
 }
 
 void DebugPanelScenes() {
@@ -195,10 +243,20 @@ void DebugPanelScenes() {
 }
 
 float SceneFade() {
-    if (Phase == Fade::None || FadeHalf <= 0) return 0;
+    if (Phase == Fade::None || FadeHalf <= 0 || FadeLook == Transition::Style::Slide) return 0;
     float t = Clamp(FadeTime / FadeHalf, 0.0f, 1.0f);
     return Phase == Fade::Out ? t : 1.0f - t;
 }
+
+bool SceneSlide(float& progress, int& towards) {
+    if (Phase != Fade::In || FadeLook != Transition::Style::Slide || FadeHalf <= 0) return false;
+    const float t = Clamp(FadeTime / FadeHalf, 0.0f, 1.0f);
+    progress = t * t * (3 - 2 * t); // eased in and out
+    towards = int(FadeSide);
+    return true;
+}
+
+bool SceneSnapshotWanted() { return Phase == Fade::Out && FadeLook == Transition::Style::Slide && SlideDrawn; }
 
 void ShutdownScenes() {
     Pending.clear();
@@ -206,6 +264,8 @@ void ShutdownScenes() {
     Pending.clear(); // anything an Exit asked for
     Phase = Fade::None;
     FadeTime = FadeHalf = 0;
+    FadeLook = Transition::Style::Fade;
+    SlideDrawn = false;
 }
 
 } // namespace Detail
