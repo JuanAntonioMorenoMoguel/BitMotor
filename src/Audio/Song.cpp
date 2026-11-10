@@ -28,10 +28,7 @@ std::optional<Wave> ParseWave(std::string_view name) {
     return std::nullopt;
 }
 
-struct Event {
-    enum class Kind { Keep, On, Off } Type = Kind::Keep;
-    float Note = 0, Volume = 1;
-};
+using Event = NoteEntry;
 
 std::string_view Trim(std::string_view text) {
     while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front()))) text.remove_prefix(1);
@@ -79,6 +76,17 @@ struct CompiledPattern {
     std::vector<CompiledTrack> Tracks;
 };
 
+CompiledInstrument CompileInstrument(const Instrument& instrument) {
+    CompiledInstrument compiled;
+    compiled.Settings = instrument;
+    compiled.Settings.Attack = std::max(0.0f, instrument.Attack);
+    compiled.Settings.Decay = std::max(0.0f, instrument.Decay);
+    compiled.Settings.Sustain = std::clamp(instrument.Sustain, 0.0f, 1.0f);
+    compiled.Settings.Release = std::max(0.0f, instrument.Release);
+    compiled.Shape = ParseWave(instrument.Wave).value_or(Wave::Square);
+    return compiled;
+}
+
 // One channel of the song: the note it plays and its envelope.
 struct Channel {
     const CompiledInstrument* Instrument = nullptr;
@@ -90,6 +98,8 @@ struct Channel {
     Synth::LowPass Filter;
     Synth::Bitcrush Crush;
     Synth::Noise Noise;
+    // The loudest sample since the mixer last asked (Peak), and the one it was told (Meter).
+    float Peak = 0, Meter = 0;
 
     void Start(const CompiledInstrument* instrument, float note, float velocity) {
         Instrument = instrument;
@@ -119,8 +129,8 @@ struct Channel {
         return in.Sustain;
     }
 
-    // One sample, left and right.
-    void Render(float& left, float& right, float dt) {
+    // One sample, left and right. A muted channel plays the same but adds nothing.
+    void Render(float& left, float& right, float dt, bool muted = false) {
         if (!Sounding) return;
         const BitMotor::Instrument& in = Instrument->Settings;
         Level = Envelope();
@@ -160,8 +170,11 @@ struct Channel {
         if (in.LowPass < 1) s = Filter(s, std::max(in.LowPass, 0.0f));
         if (in.Crush > 0 || in.Downsample > 1) s = Crush(s, std::max(1, in.Downsample), float(in.Crush));
         const float pan = std::clamp(in.Pan, -1.0f, 1.0f);
-        left += s * std::min(1.0f, 1.0f - pan);
-        right += s * std::min(1.0f, 1.0f + pan);
+        if (!muted) {
+            left += s * std::min(1.0f, 1.0f - pan);
+            right += s * std::min(1.0f, 1.0f + pan);
+            Peak = std::max(Peak, std::abs(s));
+        }
         Time += dt;
         if (Releasing) ReleaseTime += dt;
     }
@@ -170,15 +183,26 @@ struct Channel {
 struct SongSource final : MusicSource {
     std::vector<CompiledInstrument> Instruments;
     std::vector<CompiledPattern> Order;
+    // For each pattern of Order, its position in the song's Order (which also counts unknown names).
+    std::vector<int> SongIndex;
     std::vector<Channel> Channels;
     double SamplesPerRow = 0, ToNextRow = 0;
     float Volume = 1;
     int Loop = -1;
     int Position = 0, Row = 0;
-    bool Ended = false;
+    // Passes through Order still to start from Loop (-1: forever).
+    int PassesLeft = -1;
+    // The row that sounds now (-1 before the first).
+    int PlayedPosition = -1, PlayedRow = 0;
+    // Frames rendered until the song ended (Song::Render).
+    std::uint64_t Frames = 0;
+    // Last: the last row has started and the song ends when it is over. Ended: it is over.
+    bool Last = false, Ended = false;
 
     void PlayRow() {
         const CompiledPattern& pattern = Order[std::size_t(Position)];
+        PlayedPosition = SongIndex[std::size_t(Position)];
+        PlayedRow = Row;
         for (std::size_t t = 0; t < pattern.Tracks.size(); ++t) {
             const CompiledTrack& track = pattern.Tracks[t];
             if (std::size_t(Row) >= track.Events.size()) continue;
@@ -199,11 +223,11 @@ struct SongSource final : MusicSource {
         while (Row >= Order[std::size_t(Position)].Length) {
             Row = 0;
             if (++Position >= int(Order.size())) {
-                if (Loop < 0) {
-                    Ended = true;
-                    for (Channel& c : Channels) c.Release();
+                if (Loop < 0 || PassesLeft == 0) {
+                    Last = true;
                     return;
                 }
+                if (PassesLeft > 0) --PassesLeft;
                 Position = Loop;
             }
             if (++skipped > Order.size()) { // nothing but empty patterns
@@ -215,9 +239,18 @@ struct SongSource final : MusicSource {
 
     bool Render(float* out, int frames) override {
         const float dt = 1.0f / float(MixRate);
+        for (std::size_t c = 0; c < Channels.size(); ++c) {
+            Channels[c].Meter = Channels[c].Peak;
+            Channels[c].Peak = 0;
+        }
         for (int i = 0; i < frames; ++i) {
             if (!Ended) {
                 while (ToNextRow <= 0) {
+                    if (Last) { // the last row is over: the notes are released
+                        Ended = true;
+                        for (Channel& c : Channels) c.Release();
+                        break;
+                    }
                     PlayRow();
                     ToNextRow += SamplesPerRow;
                     if (Ended) break;
@@ -225,34 +258,61 @@ struct SongSource final : MusicSource {
                 ToNextRow -= 1;
             }
             float left = 0, right = 0;
-            for (Channel& c : Channels) c.Render(left, right, dt);
+            for (std::size_t c = 0; c < Channels.size(); ++c)
+                Channels[c].Render(left, right, dt, c < 64 && ((Muted >> c) & 1u) != 0);
             out[2 * i] += left * Volume;
             out[2 * i + 1] += right * Volume;
+            ++Frames;
             if (Ended && std::none_of(Channels.begin(), Channels.end(), [](auto& c) { return c.Sounding; }))
                 return false;
         }
         return true;
     }
+
+    SongPosition CurrentPosition() const override {
+        if (PlayedPosition < 0) return {SongIndex.empty() ? 0 : SongIndex[std::size_t(Position)], Row};
+        return {PlayedPosition, PlayedRow};
+    }
+
+    float Level(int channel) const override {
+        if (channel < 0 || channel >= int(Channels.size())) return 0;
+        return Channels[std::size_t(channel)].Meter * Volume;
+    }
 };
 
-std::unique_ptr<SongSource> Compile(const Song& song, bool loop) {
+// Music::PlayNote: one channel playing one note until it is released and has faded.
+struct NoteSource final : MusicSource {
+    CompiledInstrument Instrument;
+    Channel Voice;
+
+    bool Render(float* out, int frames) override {
+        const float dt = 1.0f / float(MixRate);
+        for (int i = 0; i < frames; ++i) {
+            if (!Voice.Sounding) return false;
+            float left = 0, right = 0;
+            Voice.Render(left, right, dt);
+            out[2 * i] += left;
+            out[2 * i + 1] += right;
+        }
+        return Voice.Sounding;
+    }
+
+    void Release() override { Voice.Release(); }
+};
+
+std::unique_ptr<SongSource> Compile(const Song& song, bool loop, int startOrder = 0, int startRow = 0,
+                                    int passes = -1) {
     auto source = std::make_unique<SongSource>();
     std::map<std::string, int> instruments;
     for (const auto& [name, instrument] : song.Instruments) {
-        CompiledInstrument compiled;
-        compiled.Settings = instrument;
-        compiled.Settings.Attack = std::max(0.0f, instrument.Attack);
-        compiled.Settings.Decay = std::max(0.0f, instrument.Decay);
-        compiled.Settings.Sustain = std::clamp(instrument.Sustain, 0.0f, 1.0f);
-        compiled.Settings.Release = std::max(0.0f, instrument.Release);
-        compiled.Shape = ParseWave(instrument.Wave).value_or(Wave::Square);
         instruments[name] = int(source->Instruments.size());
-        source->Instruments.push_back(compiled);
+        source->Instruments.push_back(CompileInstrument(instrument));
     }
     std::size_t channels = 0;
-    for (const std::string& name : song.Order) {
-        auto found = song.Patterns.find(name);
+    for (std::size_t index = 0; index < song.Order.size(); ++index) {
+        auto found = song.Patterns.find(song.Order[index]);
         if (found == song.Patterns.end()) continue; // reported by Validate
+        source->SongIndex.push_back(int(index));
         CompiledPattern pattern;
         pattern.Length = std::max(0, found->second.Length);
         for (const SongTrack& track : found->second.Tracks) {
@@ -265,6 +325,7 @@ std::unique_ptr<SongSource> Compile(const Song& song, bool loop) {
         channels = std::max(channels, pattern.Tracks.size());
         source->Order.push_back(std::move(pattern));
     }
+    source->PassesLeft = passes < 0 ? -1 : std::max(0, passes - 1);
     source->Channels.resize(channels);
     for (std::size_t i = 0; i < channels; ++i) source->Channels[i].Noise.State = 0x9E3779B9u + std::uint32_t(i) * 7919u;
     source->Bpm = song.Bpm > 0 ? song.Bpm : 120;
@@ -280,8 +341,17 @@ std::unique_ptr<SongSource> Compile(const Song& song, bool loop) {
         source->Loop = std::min(song.Loop - skipped, int(source->Order.size()) - 1);
     }
     if (source->Order.empty() ||
-        std::all_of(source->Order.begin(), source->Order.end(), [](auto& p) { return p.Length <= 0; }))
+        std::all_of(source->Order.begin(), source->Order.end(), [](auto& p) { return p.Length <= 0; })) {
         source->Ended = true;
+        return source;
+    }
+    // The start: the first pattern at or after `startOrder` that exists (none: the beginning), and a row of it.
+    if (startOrder > 0) {
+        auto at = std::lower_bound(source->SongIndex.begin(), source->SongIndex.end(), startOrder);
+        source->Position = at == source->SongIndex.end() ? 0 : int(at - source->SongIndex.begin());
+    }
+    const int length = source->Order[std::size_t(source->Position)].Length;
+    source->Row = startRow > 0 && startRow < length ? startRow : 0;
     return source;
 }
 
@@ -298,6 +368,7 @@ bool Validate(const Song& song, std::string_view name) {
         Log::Error("{}: Bpm and Rows must be more than 0", name);
         return false;
     }
+    if (song.Beats <= 0) Log::Warn("{}: Beats must be more than 0 (it is {})", name, song.Beats);
     for (const auto& [id, instrument] : song.Instruments)
         if (!ParseWave(instrument.Wave)) {
             Log::Warn("{}: instrument \"{}\" has an unknown Wave \"{}\" (square is used)", name, id, instrument.Wave);
@@ -347,7 +418,17 @@ std::optional<float> ParseNote(std::string_view text) {
     return float((octave + 1) * 12 + note);
 }
 
-std::unique_ptr<MusicSource> MakeSongSource(const Song& song, bool loop) { return Compile(song, loop); }
+std::unique_ptr<MusicSource> MakeSongSource(const Song& song, bool loop, int order, int row, int passes) {
+    return Compile(song, loop, order, row, passes);
+}
+
+std::unique_ptr<MusicSource> MakeNoteSource(const Instrument& instrument, float note, float volume) {
+    auto source = std::make_unique<NoteSource>();
+    source->Instrument = CompileInstrument(instrument);
+    source->Voice.Noise.State = 0x9E3779B9u;
+    source->Voice.Start(&source->Instrument, note, std::max(0.0f, volume));
+    return source;
+}
 
 std::vector<float> RenderSong(const Song& song, double seconds) {
     auto source = Compile(song, false);
@@ -358,6 +439,48 @@ std::vector<float> RenderSong(const Song& song, double seconds) {
 }
 
 } // namespace Detail
+
+std::optional<NoteEntry> NoteEntry::Parse(std::string_view text) { return Detail::ParseEvent(text); }
+
+std::string NoteEntry::ToString() const {
+    if (Type == Kind::Keep) return "";
+    if (Type == Kind::Off) return "off";
+    std::string text = NoteName(Note);
+    if (Volume != 1) {
+        char buffer[32];
+        auto [end, error] = std::to_chars(buffer, buffer + sizeof buffer, Volume);
+        if (error == std::errc()) text += ":" + std::string(buffer, end);
+    }
+    return text;
+}
+
+std::optional<float> ParseNote(std::string_view text) { return Detail::ParseNote(text); }
+
+std::string NoteName(float note) {
+    static constexpr const char* Names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    if (note >= 0 && note <= 127 && note == std::floor(note)) {
+        const int n = int(note);
+        return Names[n % 12] + std::to_string(n / 12 - 1);
+    }
+    char buffer[32];
+    auto [end, error] = std::to_chars(buffer, buffer + sizeof buffer, note);
+    return error == std::errc() ? std::string(buffer, end) : std::string("0");
+}
+
+std::vector<float> Song::Render(int passes) const {
+    auto source = Detail::Compile(*this, passes > 1, 0, 0, std::max(1, passes));
+    constexpr int Block = 4096;
+    constexpr std::uint64_t Longest = std::uint64_t(Detail::MixRate) * 3600;
+    std::vector<float> out;
+    bool playing = true;
+    while (playing && source->Frames < Longest) {
+        const std::size_t at = out.size();
+        out.resize(at + 2 * Block, 0.0f);
+        playing = source->Render(out.data() + at, Block);
+    }
+    out.resize(std::size_t(std::min(source->Frames, Longest)) * 2);
+    return out;
+}
 
 std::optional<Song> Song::Load(const std::filesystem::path& path) {
     const std::filesystem::path full = path.is_absolute() ? path : Files::AssetPath(path);

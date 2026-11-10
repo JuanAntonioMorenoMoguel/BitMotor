@@ -14,7 +14,7 @@ toma su valor por defecto, y una clave desconocida se avisa en el log.
 
 ```json
 {
-  "Format": "bitmusic", "Version": 1, "Bpm": 120, "Rows": 4, "Volume": 0.8, "Loop": 0,
+  "Format": "bitmusic", "Version": 1, "Bpm": 120, "Rows": 4, "Beats": 4, "Volume": 0.8, "Loop": 0,
   "Instruments": {
     "bass": {"Wave": "triangle", "Volume": 0.6, "Attack": 0.005, "Decay": 0.2, "Sustain": 0.5, "Release": 0.1},
     "kick": {"Wave": "sine", "Decay": 0.15, "Sustain": 0, "Sweep": -24, "SweepTime": 0.08}
@@ -34,6 +34,7 @@ toma su valor por defecto, y una clave desconocida se avisa en el log.
 | `Version` | entero | 1 | Versión del formato. Una mayor que 1 se carga con un aviso |
 | `Bpm` | número | 120 | Pulsos por minuto. Tiene que ser mayor que 0 |
 | `Rows` | entero | 4 | Filas por pulso (4: cada fila es una semicorchea en 4/4). Tiene que ser mayor que 0 |
+| `Beats` | entero | 4 | Pulsos por compás (4 en 4/4, 3 en 3/4). No cambia cómo suena: es para los editores y para exportar a otros formatos. Uno de 0 o menos se avisa |
 | `Volume` | número | 1 | Multiplica toda la canción |
 | `Loop` | entero | 0 | Posición de `Order` a la que vuelve al acabar. -1: la canción se para |
 | `Instruments` | objeto | `{}` | Instrumentos por nombre |
@@ -87,8 +88,8 @@ para que BitMusic y cualquier otra herramienta suenen igual.
 **Tiempo.** Una fila dura `60 / (Bpm × Rows)` segundos, es decir `48000 × 60 / (Bpm × Rows)` muestras. Se
 lleva la cuenta con decimales, así que el error no se acumula. La fila 0 del primer patrón suena en la
 muestra 0. Al acabar un patrón se pasa al siguiente de `Order`. Al acabar `Order`, se vuelve a la posición
-`Loop`. Si `Loop` es -1, o si la canción se reproduce sin repetir, se sueltan todas las notas y la canción
-termina cuando se apagan. Los nombres de `Order` que no existen se saltan.
+`Loop`. Si `Loop` es -1, o si la canción se reproduce sin repetir, cuando termina la última fila se sueltan
+todas las notas y la canción termina cuando se apagan. Los nombres de `Order` que no existen se saltan.
 
 **Cada fila**, pista por pista: una nota reinicia el canal con el instrumento de esa pista. La fase pasa
 a 0, el tiempo de la nota a 0, y el filtro y la reducción de bits se vacían. `"off"` empieza el release
@@ -123,3 +124,19 @@ desde el nivel actual.
 
 Los canales se suman y se multiplican por `Volume` de la canción. Después, el mezclador del juego aplica
 los volúmenes del jugador y suaviza lo que pasa de 0.8.
+
+## Para editores
+
+Lo que usa BitMusic (y cualquier otra herramienta) para editar canciones sin leer el JSON ni copiar el
+sintetizador (`include/BitMotor/Audio/Music.h`):
+
+| Función | Para qué |
+|---|---|
+| `NoteEntry::Parse(texto)`, `NoteEntry::ToString()` | Leer y escribir una entrada de `Notes` igual que el sintetizador (`{On, 60, 0.5}` ↔ `"C4:0.5"`) |
+| `ParseNote(texto)`, `NoteName(nota)` | Nombre ↔ número MIDI (`"C#4"` ↔ 61, con sostenidos) |
+| `song.Render(pasadas)` | La canción como muestras (estéreo, 48000 Hz), sin el mezclador: exportar a WAV. Con `pasadas` > 1 repite desde `Loop` |
+| `Music::Play(song, fundido, repetir, orden, fila)` | Empezar en una posición de `Order` y una fila (el cursor del editor) |
+| `Music::Position()` | La posición de `Order` y la fila que suenan (`Order` -1 si no suena una canción) |
+| `Music::Mute(canal, sí/no)`, `Music::Muted(canal)` | Silenciar un canal (0..63) sin pararlo; sigue silenciado en las canciones siguientes |
+| `Music::Level(canal)` | El pico de un canal en los últimos milisegundos: vúmetros |
+| `Music::PlayNote(instrumento, nota, volumen)`, `ReleaseNote(id)`, `ReleaseNotes()` | Tocar notas sueltas de un instrumento (hasta 16) encima de la música: probar instrumentos, tocar con el teclado |
