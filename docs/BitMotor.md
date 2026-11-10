@@ -53,7 +53,9 @@ Formatos: WAV, FLAC, MP3, OGG y `.bitmusic` (canciones de BitMusic, sintetizadas
 `Layer { Background, World, Glow, Overlay, Hud }`, `Sprite2D { Region, Position, Rotation, Scale, Origin, Color, Flip, Flash, Layer, Depth, Material }`, `Draw(Sprite2D)`, `Camera2D { Position, Zoom, Rotation, Viewport, AddShake, Trauma, ShakeOffset, ShakeAngle, Update, ToWorld, ToScreen }`, `SetCamera`, `Light2D { Position, Height, Radius, Color, Intensity }`, `Screen::Draw(Light2D)`, `Lighting::Enable, SetAmbient, SetStepped, SetBloom`, `ScreenEffects { Vignette, Grain, Aberration, Saturation }`, `Screen::SetEffects, Flash`, `Texture::SetNormals` (atlas_n.png), `ParticleRange { Min, Max }`, `ParticleStyle { Region, Life, Speed, Direction, Spread, Gravity, Drag, StartSize, EndSize, StartColor, EndColor, Spin, RandomAngle, Layer, Depth }`, `Particles { Emit, Update, Draw, Clear, Count, Capacity }`.
 
 ### UI (inmediata)
-`Rect, RectOutline, Circle, Line, Triangle, Polygon`, `Panel, Button, Toggle, Slider, Dropdown, TextField (TextFieldOptions { Placeholder, MaxLength, Password, Enabled }), Typing, Bar, Segments, Image, Tooltip, Prompt, BeginModal, EndModal, Hovered, Clicked, SetTheme, OnClick`.
+`Rect, RectOutline, Circle, Line, Triangle, Polygon`, `Panel, Button, Toggle, Slider, Dropdown, TextField (TextFieldOptions { Placeholder, MaxLength, Password, Enabled, Frame }), Typing, Bar, Segments, Image, Tooltip, Prompt, BeginModal, EndModal, Hovered, Clicked, SetTheme, OnClick`.
+
+`UI::JFxStyle` (estética inspirada en JavaFX/Modena para editores, inmediata como el resto; ver `docs/JFxStyle.md`): `Palette, Modena, SetPalette, Theme, Derive`, `RoundedRect, RoundedOutline, Shadow, ControlBody, FocusRing`, `Background, Label, Separator, Button, DefaultButton, ToggleButton, CheckBox, RadioButton, Slider, ProgressBar, TextField, ComboBox, ListView, Panel, TabPane, SplitPane, BeginDialog/EndDialog`, `BeginMenuBar, Menu, BeginContextMenu, MenuItem, CheckMenuItem, MenuSeparator, EndMenu, EndMenuBar`.
 
 ### Text
 `Font::Pixel`, `Font::Load / FromTtf` (TrueType y OpenType con `TtfOptions { Size, Smooth, Extra }`), `Font::FromAtlas`, `TextStyle { Font, Size, Color, Align, Shadow, Outline, LineHeight }`, `Draw, Paragraph, Rich, Typewriter, Measure, Wrap, Layout`, `Number(v, suffix), Percent, Clock`, `SetLanguage, Language, Tr` (`lang/<code>.json`).
@@ -99,7 +101,7 @@ Hecho (local, `platform.json` en `Files::SavePath`): `Platform::Name, Save`, `Un
 | 12 | Compute + ShaderRenderer | **v1.2** |
 | 13 | Migrar RogueInvasion (depende de nyiengisprite) | |
 | 14 | 3D y extras aplazados: Models, Obj 3D, TTF, RenderTexture, Dropdown, TextField, Wipe/Slide | Hecha |
-| 15 | BitMusic: la aplicación (hecha con BitMotor), BitMotor en web (Emscripten, renderer para el navegador) y widgets de tracker. El formato `.bitmusic` ya existe desde la fase 5 | |
+| 15 | BitMusic: la aplicación (hecha con BitMotor), BitMotor en web (Emscripten, renderer para el navegador) y widgets de tracker. El formato `.bitmusic` ya existe desde la fase 5. Hecho: `UI::JFxStyle` (aspecto de escritorio: menús, pestañas, paneles divididos, listas, diálogos) | |
 | 16 | Internet: Net online (Steam, lobbies, lockstep), red avanzada, y de Platform los marcadores online, la nube (`CloudSave`, `CloudLoad`) y la presencia | **v2.0** |
 
 Cada fase termina con tests internos y un ejemplo en `examples/`.

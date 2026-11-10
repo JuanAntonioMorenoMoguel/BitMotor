@@ -11,7 +11,9 @@ RogueInvasion will migrate to. The full design (modules, API and roadmap) is in 
 > with its own GLSL shaders, pipelines, buffers and targets on SDL_GPU, compute shaders, hot reload of shaders in
 > Debug, `BitMotor_Shaders` in CMake, and the debug panel with Dear ImGui: F1 or `--debug`), basic 3D and the
 > extras (14: TrueType fonts with `Font::Load`, `RenderTexture`, `UI::Dropdown`, `UI::TextField` and the `Wipe` and
-> `Slide` scene transitions; see `examples/13_Extras`).
+> `Slide` scene transitions; see `examples/13_Extras`). For desktop tools, `UI::JFxStyle` gives the immediate UI
+> the look of JavaFX's Modena theme, with menus, tabs, split panes, lists and dialogs (see
+> [docs/JFxStyle.md](docs/JFxStyle.md) and `examples/14_JFxStyle`).
 > Not included: Steam, local multiplayer and online features.
 
 ## Drawing your own way

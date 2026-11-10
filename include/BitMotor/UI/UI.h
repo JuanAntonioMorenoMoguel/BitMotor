@@ -59,6 +59,8 @@ struct Theme {
     Color TooltipBorder = Color::Hex(0x5A6478);
     Vec2 TooltipOffset = {8, 12};
     float TooltipLineHeight = 0;
+    // The tooltip's text (Transparent: Text.Color).
+    Color TooltipText = Colors::Transparent;
 
     // Widgets with a colour of their own (the Panel, Button and FlatButton that take a `tint`): the tint
     // colours their frame (the nine-slice image too) and their label; pointed at, both turn TextHover.
@@ -103,6 +105,8 @@ struct TextFieldOptions {
     // Shows asterisks.
     bool Password = false;
     bool Enabled = true;
+    // false: only the text and the caret, for a game (or UI::JFxStyle) that draws the box itself.
+    bool Frame = true;
 };
 // A box to type in: the label on the left and the box on the right half (with no label, the box fills the
 // area). A click or Confirm starts typing; Enter, Escape, a click elsewhere or the gamepad's Confirm/Back
