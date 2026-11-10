@@ -14,14 +14,19 @@ namespace BitMotor {
 namespace Detail {
 
 namespace {
-// Every texture alive, so the renderer can upload them when it starts and release them when it stops.
-std::vector<TextureData*> Alive;
+// Every texture alive, so the renderer can upload them when it starts and release them when it stops. Never
+// destroyed: textures held by statics (a font in a UI palette, a game's cached atlas) may be destroyed after
+// this file's statics at exit, and they must still find the list.
+std::vector<TextureData*>& Alive() {
+    static auto* alive = new std::vector<TextureData*>();
+    return *alive;
+}
 } // namespace
 
-TextureData::TextureData() { Alive.push_back(this); }
+TextureData::TextureData() { Alive().push_back(this); }
 
 TextureData::~TextureData() {
-    std::erase(Alive, this);
+    std::erase(Alive(), this);
     if (Gpu && GpuDevice()) SDL_ReleaseGPUTexture(GpuDevice(), Gpu);
 }
 
@@ -111,12 +116,12 @@ SDL_GPUTexture* GpuTexture(TextureData& texture) {
 }
 
 void UploadTextures() {
-    for (TextureData* texture : Alive) GpuTexture(*texture);
+    for (TextureData* texture : Alive()) GpuTexture(*texture);
 }
 
 void ReleaseTextures() {
     SDL_GPUDevice* device = GpuDevice();
-    for (TextureData* texture : Alive) {
+    for (TextureData* texture : Alive()) {
         if (texture->Gpu && device) SDL_ReleaseGPUTexture(device, texture->Gpu);
         texture->Gpu = nullptr;
     }
