@@ -192,3 +192,57 @@ TEST(RenderTexturesTakeTheirOwnDraws) {
     Detail::ResetSprites();
     CHECK(Detail::TargetDraws().empty());
 }
+
+TEST(HudSpritesAreClipped) {
+    Detail::ResetSprites();
+    Texture texture = Solid(4);
+    auto queued = [] { return Detail::SpriteQueue().back().Instance; };
+    // 40x40 on the screen from a 4x4 texture.
+    Sprite2D sprite{.Region = texture.Full(), .Position = {0, 0}, .Scale = {10, 10}, .Layer = Layer::Hud};
+    CHECK(!Screen::Clip());
+    Screen::PushClip({10, 10, 20, 40});
+    Screen::Draw(sprite);
+    CHECK_EQ(Detail::SpriteQueue().size(), std::size_t(1));
+    Detail::SpriteInstance s = queued();
+    CHECK_EQ(s.X, 10.0f);
+    CHECK_EQ(s.Y, 10.0f);
+    CHECK_EQ(s.Width, 20.0f);
+    CHECK_EQ(s.Height, 30.0f);
+    CHECK_EQ(s.U, 1.0f); // a quarter of the way in
+    CHECK_EQ(s.UWidth, 2.0f);
+    CHECK_EQ(s.V, 1.0f);
+    CHECK_EQ(s.VHeight, 3.0f);
+    CHECK_EQ(s.PivotX, 0.0f);
+    // Nested clips are inside each other; wholly outside is left out.
+    Screen::PushClip({0, 0, 15, 15});
+    CHECK(*Screen::Clip() == Rect(10, 10, 5, 5));
+    Screen::Draw(sprite);
+    CHECK_EQ(queued().Width, 5.0f);
+    Screen::Draw(Sprite2D{.Region = texture.Full(), .Position = {100, 100}, .Layer = Layer::Hud});
+    CHECK_EQ(Detail::SpriteQueue().size(), std::size_t(2)); // left out
+    Screen::PopClip();
+    // The World is not cut.
+    Screen::Draw(Sprite2D{.Region = texture.Full(), .Position = {100, 100}});
+    CHECK_EQ(Detail::SpriteQueue().size(), std::size_t(3));
+    // A rotated sprite is kept whole when it touches the clip.
+    sprite.Rotation = 0.5f;
+    Screen::Draw(sprite);
+    CHECK_EQ(queued().Width, 40.0f);
+    Screen::PopClip();
+    CHECK(!Screen::Clip());
+    // Flipped (its pivot mirrors: at 40 it covers 0..40): the left of the screen shows the right of the texture.
+    sprite.Rotation = 0;
+    sprite.Flip = true;
+    sprite.Position = {40, 0};
+    Screen::PushClip({0, 0, 10, 40});
+    Screen::Draw(sprite);
+    s = queued();
+    CHECK_EQ(s.X, 0.0f);
+    CHECK_EQ(s.Width, -10.0f);
+    CHECK_EQ(s.U, 3.0f);
+    CHECK_EQ(s.UWidth, 1.0f);
+    CHECK_EQ(s.PivotX, 1.0f);
+    Screen::PopClip();
+    Screen::PopClip(); // one too many: only a warning
+    Detail::ResetSprites();
+}

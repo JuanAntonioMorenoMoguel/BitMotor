@@ -5,7 +5,9 @@
 // - Drag the bar between the two halves (a SplitPane). On the left: a ListView of instruments with Add and
 //   Remove, and a Panel with a ComboBox, Sliders, a CheckBox and RadioButtons.
 // - On the right, a TabPane: "Pattern" has Mute/Solo ToggleButtons and a context menu (right-click the
-//   notes); "Song" has a TextField, a Slider, a ProgressBar and a DefaultButton.
+//   notes); "Song" has a TextField, a Slider, a ProgressBar and a DefaultButton; "Steps" is a step
+//   sequencer on a Grid (click or drag to set steps, Ctrl+wheel to zoom), with Spinners and Knobs. Drag an
+//   instrument from the list onto a track's name. File > Export as opens a submenu.
 // - Tab/arrows and Enter move the focus and press, as in every BitMotor UI: the blue ring shows it.
 // - Text in Inter (assets/fonts, SIL Open Font License), loaded with Font::Load at 14 pixels.
 // F12: screenshot. Esc closes the menu or dialog that is open, or quits.
@@ -85,6 +87,12 @@ struct Editor : Game {
             Fx::MenuItem(Tr("jfx.new"), "Ctrl+N");
             Fx::MenuItem(Tr("jfx.open"), "Ctrl+O");
             Fx::MenuItem(Tr("jfx.save"), "Ctrl+S");
+            if (Fx::BeginSubMenu(Tr("jfx.export.as"))) {
+                Fx::MenuItem("WAV");
+                Fx::MenuItem("MIDI");
+                Fx::MenuItem("XM");
+                Fx::EndMenu();
+            }
             Fx::MenuSeparator();
             if (Fx::MenuItem(Tr("jfx.quit"), "Ctrl+Q")) Quit();
             Fx::EndMenu();
@@ -107,7 +115,9 @@ struct Editor : Game {
     void DrawInstruments(BitMotor::Rect area) {
         const BitMotor::Rect box = area.Expand(-10);
         BitMotor::Rect list = Fx::Panel({box.X, box.Y, box.Width, 250}, Tr("jfx.instruments"));
-        Fx::ListView({list.X, list.Y, list.Width, list.Height - 38}, instrument, instruments, scroll);
+        const BitMotor::Rect rows{list.X, list.Y, list.Width, list.Height - 38};
+        Fx::ListView(rows, instrument, instruments, scroll);
+        Fx::DragSource(rows, instruments[std::size_t(instrument)], instruments[std::size_t(instrument)]);
         const float half = std::floor((list.Width - 8) / 2);
         if (Fx::Button({list.X, list.Bottom() - 28, half, 28}, Tr("jfx.add")))
             instruments.push_back(Tr("jfx.instrument") + " " + std::to_string(instruments.size() + 1));
@@ -137,9 +147,12 @@ struct Editor : Game {
     }
 
     void DrawSong(BitMotor::Rect area) {
-        const BitMotor::Rect page = Fx::TabPane(area.Expand(-10), tab, {Tr("jfx.pattern"), Tr("jfx.song")});
+        const BitMotor::Rect page =
+            Fx::TabPane(area.Expand(-10), tab, {Tr("jfx.pattern"), Tr("jfx.song"), Tr("jfx.steps")});
         const BitMotor::Rect inside = page.Expand(-12);
-        if (tab == 0) {
+        if (tab == 2) {
+            DrawSteps(inside);
+        } else if (tab == 0) {
             // Four tracks: Mute and Solo over a column of notes each.
             const float column = std::floor((inside.Width - 3 * 10) / 4);
             const BitMotor::Rect notes{inside.X, inside.Y + 76, inside.Width, inside.Height - 76};
@@ -192,6 +205,55 @@ struct Editor : Game {
         }
     }
 
+    void DrawSteps(BitMotor::Rect inside) {
+        float x = inside.X;
+        auto labelled = [&](std::string_view label, float width) {
+            Fx::Label({x, inside.Y, width, 28}, label);
+            x += width;
+        };
+        labelled(Tr("jfx.tempo"), 60);
+        Fx::Spinner({x, inside.Y, 80, 28}, tempo, 20, 400);
+        x += 100;
+        labelled(Tr("jfx.rows"), 110);
+        Fx::Spinner({x, inside.Y, 60, 28}, rowsPerBeat, 1, 16);
+        x += 80;
+        labelled(Tr("jfx.pan"), 40);
+        Fx::Knob({x, inside.Y - 4, 36, 36}, knobPan, -1, 1, 0.01f, 0.0f);
+        x += 52;
+        labelled(Tr("jfx.filter"), 50);
+        Fx::Knob({x, inside.Y - 4, 36, 36}, knobFilter, 0, 1, 0.01f);
+
+        // Track names on the left (drop an instrument on one), the steps on a Grid.
+        const float names = 110, top = inside.Y + 44;
+        if (Input::KeyDown(Key::LeftCtrl) && UI::Hovered({inside.X + names, top, inside.Width - names, 200}))
+            stepGrid.Cell.X = Clamp(stepGrid.Cell.X + Input::MouseWheel() * 2, 12.0f, 48.0f);
+        stepGrid.Cell.Y = 32;
+        const BitMotor::Rect gridArea{inside.X + names, top, inside.Width - names, 4 * 32 + 2 + 14};
+        Fx::GridInput in = Fx::BeginGrid(gridArea, stepGrid);
+        if (in.Pressed.Valid()) painting = !steps[in.Pressed.Row][in.Pressed.Column];
+        if ((in.Pressed.Valid() || in.Dragging) && in.Hovered.Valid())
+            steps[in.Hovered.Row][in.Hovered.Column] = painting;
+        const Color on = Fx::GetPalette().Accent;
+        for (int t = 0; t < 4; ++t)
+            for (int c = 0; c < 32; ++c)
+                if (steps[t][c]) Fx::RoundedRect(Fx::GridCell(c, t).Expand(-4), 3, on);
+        if (in.Hovered.Valid() && !in.Dragging) Fx::GridSelection(in.Hovered, in.Hovered);
+        Fx::EndGrid();
+        for (int t = 0; t < 4; ++t) {
+            const BitMotor::Rect name{inside.X, top + 1 + float(t) * 32 - stepGrid.Scroll.Y, names - 8, 32};
+            Fx::Label(name, trackNames[t]);
+            if (std::string dropped; Fx::DropTarget(name, dropped)) trackNames[t] = dropped;
+        }
+        Fx::Label({inside.X, gridArea.Bottom() + 8, inside.Width, 24}, Tr("jfx.steps.hint"));
+    }
+
+    int tempo = 120, rowsPerBeat = 4;
+    float knobPan = 0, knobFilter = 0.7f;
+    Fx::Grid stepGrid{.Cell = {28, 32}, .Columns = 32, .Rows = 4, .MajorColumns = 16, .BandColumns = 4};
+    bool steps[4][32] = {{true, false, false, false, true, false, false, false, true},
+                         {false, false, false, false, true}};
+    bool painting = true;
+    std::string trackNames[4] = {"Kick", "Snare", "Hi-hat", "Bass"};
     std::vector<std::string> rowNames[4];
     int noteRow = 0, noteScroll = 0;
 };

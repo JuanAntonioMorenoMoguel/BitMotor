@@ -80,6 +80,12 @@
     "play": "Play",
     "about.title": "About",
     "about.text": "UI::JFxStyle: aesthetics inspired by JavaFX (Modena), immediate like the rest of BitMotor's UI.",
-    "close": "Close"
+    "close": "Close",
+    "export.as": "Export as",
+    "steps": "Steps",
+    "tempo": "Tempo",
+    "rows": "Rows per beat",
+    "filter": "Filter",
+    "steps.hint": "Click or drag to set steps; Ctrl+wheel zooms. Drag an instrument from the list onto a track."
   }
 }

@@ -116,6 +116,25 @@ esquinas suavizadas (cobertura 4×4 por píxel).
 | `SplitPane(area, float& proporción, Rect& a, Rect& b, Orientation)` | `true` mientras se arrastra | `Horizontal`: lado a lado (como en JavaFX); `Vertical`: uno encima del otro |
 | `BeginDialog(area, título)` / `EndDialog()` | área interior | Sombra, oscurece el resto y lo vuelve inactivo (`UI::BeginModal`) |
 
+### Para editores
+
+| Widget | Devuelve | Notas |
+|---|---|---|
+| `Spinner(area, int&, min, max, paso)` y `Spinner(area, float&, min, max, paso, decimales)` | `true` al cambiar | Número con flechas arriba/abajo; también la rueda, Izquierda/Derecha y arrastrar en vertical (un paso cada 4 píxeles) |
+| `Knob(area, float&, min, max, paso, origen)` | `true` al cambiar | Perilla redonda con un arco en el acento desde `origen` (0 para un pan de -1 a 1). Se arrastra en vertical (150 píxeles todo el recorrido), con la rueda o Izquierda/Derecha |
+| `BeginScrollArea(area, tamaño, Vec2& scroll)` / `EndScrollArea()` | dónde va la esquina del contenido | Barras horizontal y vertical cuando no cabe, rueda (con Shift en horizontal; con Ctrl no hace nada, para el zoom). Recorta lo que se dibuja dentro. `ScrollView()`: la parte visible |
+| `BeginGrid(area, Grid&)` / `EndGrid()` | `GridInput` | Rejilla de celdas en un área con scroll: fondo, líneas (más marcadas cada `MajorColumns`/`MajorRows`) y franjas cada `BandColumns`. Dice la celda bajo el ratón, la pulsada (izquierdo y derecho), si se arrastra y desde dónde, y cuándo se suelta. Lo de dentro lo dibuja quien llama con `GridCell(columna, fila)`; `GridSelection(a, b)` marca una selección |
+| `DragSource(area, carga, etiqueta)` | `true` mientras se arrastra | Arrastrar y soltar con una carga de texto: empieza al pulsar en el área y mover 4 píxeles, y la etiqueta sigue al puntero |
+| `DropTarget(area, std::string& carga)` | `true` al soltar encima | Mientras pasa un arrastre por encima, el área se marca con el acento. `Dragged()` dice qué se arrastra |
+
+```cpp
+Fx::Grid steps{.Cell = {24, 24}, .Columns = 64, .Rows = 8, .MajorColumns = 16, .BandColumns = 4};
+Fx::GridInput in = Fx::BeginGrid(area, steps);
+if (in.Pressed.Valid()) Toggle(in.Pressed.Row, in.Pressed.Column);
+for (const Step& s : notes) Fx::RoundedRect(Fx::GridCell(s.Column, s.Row).Expand(-3), 3, accent);
+Fx::EndGrid();
+```
+
 ### Menús
 
 Un solo menú abierto a la vez, dibujado encima de todo con sombra. Mientras está abierto se queda con todos los
@@ -142,12 +161,29 @@ if (Fx::BeginContextMenu(patternArea)) {        // se abre con clic derecho dond
   Izquierda/Derecha pasan al de al lado.
 - `MenuItem(texto, atajo, activo)`: el atajo solo se muestra; las teclas las lee el juego.
 - `CheckMenuItem(texto, bool&, atajo, activo)`, `MenuSeparator()`, `EndMenu()`.
+- `BeginSubMenu(texto, activo)`: una fila con flecha que abre un submenú al lado (al señalarla, con un clic,
+  Derecha o Confirm; Izquierda o Escape vuelven al menú). Devuelve `true` mientras está abierto: entonces se le
+  dan sus filas y se cierra con `EndMenu()`. Solo un nivel.
+
+```cpp
+if (Fx::BeginSubMenu(Tr("menu.export"))) {
+    if (Fx::MenuItem("WAV")) ExportWav();
+    Fx::EndMenu();
+}
+```
 
 ## Teclado y foco
 
 Igual que en `UI::*`: el ratón da el foco al pasar por encima, y las flechas (o el mando) lo mueven por los
 widgets en el orden en que se llaman; Confirm los pulsa. El anillo azul de foco se ve cuando el foco lo ha movido
 el teclado o el mando. Dentro de un menú o de la lista de un `ComboBox`: Arriba/Abajo, Confirm y Escape.
+
+## Recorte
+
+`Screen::PushClip(área)` y `Screen::PopClip()` recortan todo lo que se dibuja en la capa `Hud` (sprites, texto,
+formas, widgets) a un rectángulo de la pantalla. Se anidan (cada uno queda dentro del anterior) y los widgets
+tampoco responden al ratón fuera del recorte. Los menús y listas desplegables no se recortan. Los sprites
+girados no se cortan: solo se quitan si quedan enteros fuera. `ScrollArea` y `Grid` lo usan por dentro.
 
 ## Cambios en la UI base
 
@@ -158,6 +194,6 @@ el teclado o el mando. Dentro de un menú o de la lista de un `ComboBox`: Arriba
 
 ## Pendiente (posibles mejoras)
 
-- Submenús, `TreeView`, `TableView`, `Spinner` y `ColorPicker`.
-- Recorte (*scissor*) en la capa `Hud`, para listas con filas a medias y paneles con scroll.
-- Widgets propios de tracker para BitMusic (rejilla de patrón, lista de orden) sobre estas formas.
+- `TreeView`, `TableView` y `ColorPicker`; submenús de más de un nivel.
+- Escribir el número en un `Spinner` con el teclado.
+- `ListView` con scroll suave por píxeles (ahora va por filas enteras) usando el recorte.

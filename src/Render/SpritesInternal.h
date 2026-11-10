@@ -56,6 +56,12 @@ SpriteInstance MakeInstance(const Sprite2D& sprite, const Camera2D* camera);
 
 // This frame's queue (Draw adds to it, the renderer empties it).
 std::vector<QueuedSprite>& SpriteQueue();
+// Cuts a Hud sprite to `clip` (screen pixels). false if nothing of it is left.
+bool ClipInstance(SpriteInstance& sprite, const Rect& clip);
+// Takes every clip away (and gives them back): popups drawn at the end of the frame are not cut.
+std::vector<Rect> TakeClips();
+void RestoreClips(std::vector<Rect> clips);
+
 // Back to the default camera and empty queues (sprites and lights), at the start of each frame.
 void ResetSprites();
 

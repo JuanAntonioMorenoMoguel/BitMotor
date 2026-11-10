@@ -80,6 +80,12 @@
     "play": "Tocar",
     "about.title": "Acerca de",
     "about.text": "UI::JFxStyle: estética inspirada en JavaFX (Modena), inmediata como el resto de la UI de BitMotor.",
-    "close": "Cerrar"
+    "close": "Cerrar",
+    "export.as": "Exportar como",
+    "steps": "Pasos",
+    "tempo": "Tempo",
+    "rows": "Filas por pulso",
+    "filter": "Filtro",
+    "steps.hint": "Haz clic o arrastra para poner pasos; Ctrl+rueda acerca. Arrastra un instrumento de la lista a una pista."
   }
 }
