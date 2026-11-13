@@ -46,6 +46,7 @@
 #include "BitMotor/Render/Particles.h"
 #include "BitMotor/Render/RenderTexture.h"
 #include "BitMotor/Render/Sprite.h"
+#include "BitMotor/Render/SpriteFile.h"
 #include "BitMotor/Render/Texture.h"
 
 #include "BitMotor/Text/Font.h"

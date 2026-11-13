@@ -3,6 +3,7 @@
 
 #include "BitMotor/Math/Functions.h"
 #include "BitMotor/Render/Atlas.h"
+#include "BitMotor/Render/SpriteFile.h"
 
 using namespace BitMotor;
 
@@ -121,4 +122,25 @@ TEST(AtlasSocketsBelongToFrames) {
     CHECK_EQ(atlas.Socket(atlas.Sprite("big"), "tip")->Offset, Vec2(4, 0));
     // A region from another texture never matches.
     CHECK(!atlas.Socket(Blank().Full(), "hand"));
+}
+
+TEST(AtlasReadsPackedSprites) {
+    SpriteFile hero;
+    hero.Size = {4, 4};
+    hero.Pivot = {2, 4};
+    hero.Palette = {{"clear"}, {"red", Color(1, 0, 0, 1)}};
+    hero.Layers = {{"art", "pixels"}};
+    hero.Frames = {{100}, {200}};
+    hero.Tags = {{"walk", 0, 1, "forward", false, {{"step", {1}}}}};
+    PackedAtlas packed = PackSprites({{"hero", hero}});
+    Texture image = Texture::FromPixels(packed.Image.Width, packed.Image.Height, packed.Image.Color);
+    Atlas atlas = Atlas::Parse(packed.Json, image, "packed");
+    CHECK(atlas.Has("hero_walk_0"));
+    CHECK(atlas.Has("hero_walk_1"));
+    CHECK_EQ(atlas.Sprite("hero_walk_0").Pivot, Vec2(2, 4));
+    Animation walk = atlas.Animation("hero_walk");
+    CHECK_EQ(walk.Count(), 2);
+    CHECK(!walk.Loops());
+    CHECK_NEAR(walk.Duration(), 0.3f, 1e-5f);
+    CHECK(walk.Fired("step", 0.05f, 0.15f));
 }
