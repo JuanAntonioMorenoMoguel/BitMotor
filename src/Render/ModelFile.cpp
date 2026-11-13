@@ -259,13 +259,17 @@ std::optional<ModelFile> ModelFile::Parse(std::string_view text, std::string_vie
     ModelFile file;
     if (json.contains("Version") && json["Version"].is_number()) {
         file.Version = int(r.Number(json["Version"], 1));
-        if (file.Version > 1) Log::Warn("{}: version {} is newer than this BitMotor reads (1)", name, file.Version);
+        if (file.Version > 2) Log::Warn("{}: version {} is newer than this BitMotor reads (2)", name, file.Version);
     }
 
     if (json.contains("Materials") && json["Materials"].is_object())
         for (auto& [key, m] : json["Materials"].items()) {
             const std::string where = "material " + key;
-            r.Unknown(m, {"Color", "Texture", "Filter", "Emission", "Unlit"}, where);
+            r.Unknown(m,
+                      {"Color", "Texture", "Filter", "Emission", "Unlit", "Metallic", "Roughness", "Normal",
+                       "NormalScale", "MetalRough", "Occlusion", "OcclusionStrength", "EmissionTexture", "AlphaCutoff",
+                       "DoubleSided"},
+                      where);
             Material& material = file.Materials[key];
             material.Tint = r.ColorOf(m, "Color");
             material.Texture = r.Text(m, "Texture", where);
@@ -275,6 +279,19 @@ std::optional<ModelFile> ModelFile::Parse(std::string_view text, std::string_vie
             material.TextureFilter = filter == "linear" ? Filter::Linear : Filter::Nearest;
             material.Emission = m.contains("Emission") ? Reader::Number(m["Emission"]) : 0.0f;
             material.Unlit = r.Bool(m, "Unlit", false, where);
+            auto number = [&](const char* key, float fallback) {
+                return m.contains(key) ? Reader::Number(m[key], fallback) : fallback;
+            };
+            material.Metallic = std::clamp(number("Metallic", 0), 0.0f, 1.0f);
+            material.Roughness = std::clamp(number("Roughness", 1), 0.0f, 1.0f);
+            material.Normal = r.Text(m, "Normal", where);
+            material.NormalScale = number("NormalScale", 1);
+            material.MetalRough = r.Text(m, "MetalRough", where);
+            material.Occlusion = r.Text(m, "Occlusion", where);
+            material.OcclusionStrength = std::clamp(number("OcclusionStrength", 1), 0.0f, 1.0f);
+            material.EmissionTexture = r.Text(m, "EmissionTexture", where);
+            material.AlphaCutoff = std::clamp(number("AlphaCutoff", 0), 0.0f, 1.0f);
+            material.DoubleSided = r.Bool(m, "DoubleSided", false, where);
         }
 
     if (json.contains("Meshes") && json["Meshes"].is_object())
@@ -383,10 +400,20 @@ std::optional<ModelFile> ModelFile::Parse(std::string_view text, std::string_vie
     return file;
 }
 
+bool ModelFile::Material::Physical() const {
+    return Metallic != 0 || Roughness != 1 || !Normal.empty() || NormalScale != 1 || !MetalRough.empty() ||
+           !Occlusion.empty() || OcclusionStrength != 1 || !EmissionTexture.empty() || AlphaCutoff != 0 ||
+           DoubleSided;
+}
+
 // ---------------------------------------------------------------- writing
 
 std::string ModelFile::ToJson() const {
-    std::string out = "{\n  \"Format\": " + Quoted(Format) + ",\n  \"Version\": " + std::to_string(Version);
+    // Version 2 as soon as something needs it, so version 1 readers never get keys they do not know.
+    int version = Version;
+    for (const auto& [key, m] : Materials)
+        if (m.Physical()) version = std::max(version, 2);
+    std::string out = "{\n  \"Format\": " + Quoted(Format) + ",\n  \"Version\": " + std::to_string(version);
     auto section = [&](std::string_view key) { out += ",\n  " + Quoted(key) + ": "; };
 
     if (!Materials.empty()) {
@@ -400,6 +427,16 @@ std::string ModelFile::ToJson() const {
             if (m.TextureFilter == Filter::Linear) line.Add("Filter", "\"linear\"");
             if (m.Emission != 0) line.Add("Emission", NumberText(m.Emission));
             if (m.Unlit) line.Add("Unlit", "true");
+            if (m.Metallic != 0) line.Add("Metallic", NumberText(m.Metallic));
+            if (m.Roughness != 1) line.Add("Roughness", NumberText(m.Roughness));
+            if (!m.Normal.empty()) line.Add("Normal", Quoted(m.Normal));
+            if (m.NormalScale != 1) line.Add("NormalScale", NumberText(m.NormalScale));
+            if (!m.MetalRough.empty()) line.Add("MetalRough", Quoted(m.MetalRough));
+            if (!m.Occlusion.empty()) line.Add("Occlusion", Quoted(m.Occlusion));
+            if (m.OcclusionStrength != 1) line.Add("OcclusionStrength", NumberText(m.OcclusionStrength));
+            if (!m.EmissionTexture.empty()) line.Add("EmissionTexture", Quoted(m.EmissionTexture));
+            if (m.AlphaCutoff != 0) line.Add("AlphaCutoff", NumberText(m.AlphaCutoff));
+            if (m.DoubleSided) line.Add("DoubleSided", "true");
             out += "    " + Quoted(key) + ": " + line.Done() + (++i < Materials.size() ? ",\n" : "\n");
         }
         out += "  }";
@@ -530,10 +567,22 @@ std::shared_ptr<ModelData> BuildModel(const ModelFile& file, const std::filesyst
         material.Tint = m.Tint;
         material.Emission = m.Emission;
         material.Unlit = m.Unlit;
-        if (full && !m.Texture.empty()) {
-            const std::filesystem::path path = folder / Utf8Path(m.Texture);
-            material.Image = Texture::Load(path.is_relative() ? Files::AssetPath(path) : path, m.TextureFilter);
-        }
+        material.Metallic = m.Metallic;
+        material.Roughness = m.Roughness;
+        material.NormalScale = m.NormalScale;
+        material.OcclusionStrength = m.OcclusionStrength;
+        material.AlphaCutoff = m.AlphaCutoff;
+        material.DoubleSided = m.DoubleSided;
+        auto load = [&](const std::string& file) {
+            if (!full || file.empty()) return Texture{};
+            const std::filesystem::path path = folder / Utf8Path(file);
+            return Texture::Load(path.is_relative() ? Files::AssetPath(path) : path, m.TextureFilter);
+        };
+        material.Image = load(m.Texture);
+        material.NormalMap = load(m.Normal);
+        material.MetalRoughMap = load(m.MetalRough);
+        material.OcclusionMap = load(m.Occlusion);
+        material.EmissionMap = load(m.EmissionTexture);
         materials[key] = material;
     }
 

@@ -270,7 +270,6 @@ std::optional<GltfImport> ImportGltf(std::span<const std::uint8_t> bytes, const 
             const std::string uri = image.value("uri", std::string()), mime = image.value("mimeType", std::string());
             const bool jpeg = mime == "image/jpeg" || uri.ends_with(".jpg") || uri.ends_with(".jpeg") ||
                               uri.rfind("data:image/jpeg", 0) == 0;
-            if (jpeg) notes.push_back("image " + std::to_string(i) + " is a JPEG: BitMotor models use PNG textures");
             if (!uri.empty() && uri.rfind("data:", 0) != 0) {
                 imageNames.push_back(uri);
                 continue;
@@ -301,22 +300,39 @@ std::optional<GltfImport> ImportGltf(std::span<const std::uint8_t> bytes, const 
                 material.Tint = {ToSrgb(c[0].get<float>()), ToSrgb(c[1].get<float>()), ToSrgb(c[2].get<float>()),
                                  c[3].get<float>()};
             }
-            if (pbr.contains("baseColorTexture")) {
-                const std::size_t texture = pbr["baseColorTexture"].value("index", std::size_t(0));
-                if (root.contains("textures") && texture < root["textures"].size()) {
-                    const Json& t = root["textures"][texture];
-                    const std::size_t source = t.value("source", std::size_t(0));
-                    if (source < imageNames.size()) material.Texture = imageNames[source];
-                    if (t.contains("sampler") && root.contains("samplers")) {
-                        const Json& s = root["samplers"][t["sampler"].get<std::size_t>()];
-                        if (s.value("magFilter", 9729) == 9729) material.TextureFilter = Filter::Linear;
-                    } else {
-                        material.TextureFilter = Filter::Linear; // glTF's default sampler is smooth
-                    }
+            // A texture's image name (and the material's filter from its sampler), or "".
+            bool secondUvs = false;
+            auto textureOf = [&](const Json& owner, const char* slot) -> std::string {
+                if (!owner.contains(slot) || !owner[slot].is_object()) return {};
+                const Json& info = owner[slot];
+                if (info.value("texCoord", 0) != 0) secondUvs = true;
+                const std::size_t texture = info.value("index", std::size_t(0));
+                if (!root.contains("textures") || texture >= root["textures"].size()) return {};
+                const Json& t = root["textures"][texture];
+                if (t.contains("sampler") && root.contains("samplers")) {
+                    const Json& s = root["samplers"][t["sampler"].get<std::size_t>()];
+                    if (s.value("magFilter", 9729) == 9729) material.TextureFilter = Filter::Linear;
+                } else {
+                    material.TextureFilter = Filter::Linear; // glTF's default sampler is smooth
                 }
-                if (pbr["baseColorTexture"].value("texCoord", 0) != 0)
-                    notes.push_back("material " + key + " uses a second set of UVs: the first is used");
-            }
+                const std::size_t source = t.value("source", std::size_t(0));
+                return source < imageNames.size() ? imageNames[source] : std::string();
+            };
+            material.Texture = textureOf(pbr, "baseColorTexture");
+            material.Metallic = std::clamp(pbr.value("metallicFactor", 1.0f), 0.0f, 1.0f);
+            material.Roughness = std::clamp(pbr.value("roughnessFactor", 1.0f), 0.0f, 1.0f);
+            material.MetalRough = textureOf(pbr, "metallicRoughnessTexture");
+            material.Normal = textureOf(m, "normalTexture");
+            if (!material.Normal.empty()) material.NormalScale = m["normalTexture"].value("scale", 1.0f);
+            material.Occlusion = textureOf(m, "occlusionTexture");
+            if (!material.Occlusion.empty())
+                material.OcclusionStrength = std::clamp(m["occlusionTexture"].value("strength", 1.0f), 0.0f, 1.0f);
+            material.EmissionTexture = textureOf(m, "emissiveTexture");
+            if (secondUvs) notes.push_back("material " + key + " uses a second set of UVs: the first is used");
+            const std::string alpha = m.value("alphaMode", std::string("OPAQUE"));
+            if (alpha == "MASK") material.AlphaCutoff = std::clamp(m.value("alphaCutoff", 0.5f), 0.001f, 1.0f);
+            if (alpha == "OPAQUE") material.Tint.A = 1;
+            material.DoubleSided = m.value("doubleSided", false);
             if (m.contains("emissiveFactor") && m["emissiveFactor"].size() == 3) {
                 const Json& e = m["emissiveFactor"];
                 float strength = 1;
@@ -324,10 +340,9 @@ std::optional<GltfImport> ImportGltf(std::span<const std::uint8_t> bytes, const 
                     strength = m["extensions"]["KHR_materials_emissive_strength"].value("emissiveStrength", 1.0f);
                 material.Emission = std::max({e[0].get<float>(), e[1].get<float>(), e[2].get<float>()}) * strength;
             }
+            if (!material.EmissionTexture.empty() && !m.contains("emissiveFactor"))
+                notes.push_back("material " + key + ": an emission map without emissiveFactor does not glow");
             if (m.contains("extensions") && m["extensions"].contains("KHR_materials_unlit")) material.Unlit = true;
-            if (pbr.contains("metallicRoughnessTexture") || m.contains("normalTexture") ||
-                m.contains("occlusionTexture"))
-                notes.push_back("material " + key + ": metal, roughness, normal and occlusion maps are left out");
         }
 
     // ---- meshes: one per triangle primitive
@@ -607,25 +622,42 @@ std::vector<std::uint8_t> ExportGlb(const ModelFile& file) {
     for (const auto& [key, m] : file.Materials) {
         Json material = {{"name", key}};
         Json pbr = {{"baseColorFactor", Floats({ToLinear(m.Tint.R), ToLinear(m.Tint.G), ToLinear(m.Tint.B), m.Tint.A})},
-                    {"metallicFactor", 0},
-                    {"roughnessFactor", 1}};
-        if (!m.Texture.empty()) {
-            if (!imageIndex.contains(m.Texture)) {
-                w.Root["images"].push_back({{"uri", m.Texture}});
-                imageIndex[m.Texture] = w.Root["images"].size() - 1;
+                    {"metallicFactor", m.Metallic},
+                    {"roughnessFactor", m.Roughness}};
+        // The texture for an image (one per image and filter), by index.
+        auto texture = [&](const std::string& image) {
+            if (!imageIndex.contains(image)) {
+                w.Root["images"].push_back({{"uri", image}});
+                imageIndex[image] = w.Root["images"].size() - 1;
             }
             const int filter = m.TextureFilter == Filter::Linear ? 9729 : 9728;
-            const auto texKey = std::pair{m.Texture, filter};
+            const auto texKey = std::pair{image, filter};
             if (!textureIndex.contains(texKey)) {
                 if (!w.Root.contains("samplers")) w.Root["samplers"] = Json::array();
                 w.Root["samplers"].push_back({{"magFilter", filter}, {"minFilter", filter}});
                 w.Root["textures"].push_back(
-                    {{"source", imageIndex[m.Texture]}, {"sampler", w.Root["samplers"].size() - 1}});
+                    {{"source", imageIndex[image]}, {"sampler", w.Root["samplers"].size() - 1}});
                 textureIndex[texKey] = w.Root["textures"].size() - 1;
             }
-            pbr["baseColorTexture"] = {{"index", textureIndex[texKey]}};
-        }
+            return textureIndex[texKey];
+        };
+        if (!m.Texture.empty()) pbr["baseColorTexture"] = {{"index", texture(m.Texture)}};
+        if (!m.MetalRough.empty()) pbr["metallicRoughnessTexture"] = {{"index", texture(m.MetalRough)}};
         material["pbrMetallicRoughness"] = pbr;
+        if (!m.Normal.empty()) {
+            material["normalTexture"] = {{"index", texture(m.Normal)}};
+            if (m.NormalScale != 1) material["normalTexture"]["scale"] = m.NormalScale;
+        }
+        if (!m.Occlusion.empty()) {
+            material["occlusionTexture"] = {{"index", texture(m.Occlusion)}};
+            if (m.OcclusionStrength != 1) material["occlusionTexture"]["strength"] = m.OcclusionStrength;
+        }
+        if (!m.EmissionTexture.empty()) material["emissiveTexture"] = {{"index", texture(m.EmissionTexture)}};
+        if (m.AlphaCutoff > 0) {
+            material["alphaMode"] = "MASK";
+            material["alphaCutoff"] = m.AlphaCutoff;
+        }
+        if (m.DoubleSided) material["doubleSided"] = true;
         if (m.Emission > 0) {
             const float e = std::min(m.Emission, 1.0f);
             material["emissiveFactor"] = Floats({e, e, e});
@@ -638,7 +670,7 @@ std::vector<std::uint8_t> ExportGlb(const ModelFile& file) {
             material["extensions"]["KHR_materials_unlit"] = Json::object();
             extensions.insert("KHR_materials_unlit");
         }
-        if (m.Tint.A < 1) material["alphaMode"] = "BLEND";
+        if (m.Tint.A < 1 && m.AlphaCutoff <= 0) material["alphaMode"] = "BLEND";
         w.Root["materials"].push_back(material);
         materialIndex[key] = w.Root["materials"].size() - 1;
     }

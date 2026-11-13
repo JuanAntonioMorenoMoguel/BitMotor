@@ -204,13 +204,14 @@ struct GltfImport {
 using GltfFiles = std::function<std::optional<std::vector<std::uint8_t>>(std::string_view uri)>;
 // A glTF 2.0 model (a .glb, or the text of a .gltf) as a model: its default scene's nodes with their
 // position, rotation and scale (matrices are split into them), one mesh per triangle primitive with
-// positions, normals, the first UVs and vertex colours, materials (base colour and its texture, emission,
-// KHR_materials_unlit) and node animations (linear, step; cubic ones keep only their values). Skins and morph
+// positions, normals, the first UVs and vertex colours, materials (metal/roughness with all their maps:
+// colour, metal-rough, normal, occlusion, emission; alpha cut-out, double sided, KHR_materials_unlit and
+// KHR_materials_emissive_strength) and node animations (linear, step; cubic ones keep only their values). Skins and morph
 // targets are left out and noted. Sockets and events come back from files that ExportGlb wrote. nullopt
 // if it cannot be read.
 std::optional<GltfImport> ImportGltf(std::span<const std::uint8_t> bytes, const GltfFiles& files = {},
                                      std::string_view name = "gltf");
-// The model as a .glb: meshes, materials (textures by their path, not embedded), nodes, animations, and the
+// The model as a .glb: meshes, materials with their maps (textures by their path, not embedded), nodes, animations, and the
 // sockets and events in the file's extras. The same model always gives the same bytes.
 std::vector<std::uint8_t> ExportGlb(const ModelFile& file);
 

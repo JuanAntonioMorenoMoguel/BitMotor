@@ -61,14 +61,18 @@ SDL_GPUTexture* GpuTexture(TextureData& texture) {
     if (texture.Target) return MakeTarget(device, texture);
     if (texture.Pixels.empty()) return nullptr; // it was already on a device that stopped
 
+    // Smooth textures get their mipmaps (only 3D models sample past the first level), made on the GPU.
+    Uint32 levels = 1;
+    if (texture.Look == Filter::Linear)
+        while ((std::max(texture.Width, texture.Height) >> levels) > 0) ++levels;
     SDL_GPUTextureCreateInfo info{};
     info.type = SDL_GPU_TEXTURETYPE_2D;
     info.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
-    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
+    info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER | (levels > 1 ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0);
     info.width = Uint32(texture.Width);
     info.height = Uint32(texture.Height);
     info.layer_count_or_depth = 1;
-    info.num_levels = 1;
+    info.num_levels = levels;
     SDL_GPUTexture* gpu = SDL_CreateGPUTexture(device, &info);
     if (!gpu) {
         Log::Error("SDL_CreateGPUTexture ({}x{}): {}", texture.Width, texture.Height, SDL_GetError());
@@ -102,6 +106,7 @@ SDL_GPUTexture* GpuTexture(TextureData& texture) {
     destination.d = 1;
     SDL_UploadToGPUTexture(copy, &source, &destination, false);
     SDL_EndGPUCopyPass(copy);
+    if (levels > 1) SDL_GenerateMipmapsForGPUTexture(commands, gpu);
     SDL_SubmitGPUCommandBuffer(commands);
     SDL_ReleaseGPUTransferBuffer(device, buffer); // SDL keeps it until the copy is done
 

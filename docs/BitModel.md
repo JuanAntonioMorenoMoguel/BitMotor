@@ -1,13 +1,18 @@
-# Formato BitModel (`.bitmodel`), versión 1
+# Formato BitModel (`.bitmodel`), versión 2
 
 Un modelo 3D low-poly para el 3D básico de BitMotor. Lo exporta BitModel y lo carga `Model::Load("robot.bitmodel")`
 (`include/BitMotor/Render/Model.h`). El código que lo lee y lo escribe está en `src/Render/ModelFile.cpp`. Este
 documento y ese fichero tienen que decir lo mismo.
 
 Lo que el 3D de BitMotor dibuja en esta versión: mallas de triángulos con posición, normal, UV y color por vértice;
-un material por malla (color, textura, emisión, sin luz); nodos en jerarquía; animación rígida por nodo; sockets.
-La luz es ambiente + un sol + hasta 8 luces puntuales por modelo (las más cercanas), por píxel, con bandas
-opcionales (`Lighting::SetStepped`). No hay esqueletos, morph targets, PBR ni sombras proyectadas.
+un material por malla (color, textura, emisión, sin luz y, desde la versión 2, metal/rugosidad con mapas de
+normales, de metal y rugosidad, de oclusión y de emisión, recorte por alfa y doble cara); nodos en jerarquía;
+animación rígida por nodo; sockets. La luz es ambiente + un sol + hasta 8 luces puntuales por modelo (las más
+cercanas), por píxel, con bandas opcionales (`Lighting::SetStepped`) en los materiales sencillos. Todavía no hay
+esqueletos, morph targets, luz del cielo ni sombras proyectadas (plan en el repo de BitModel).
+
+**Versiones.** La 2 solo añade claves de material. `ModelFile::ToJson` escribe `"Version": 2` en cuanto un material
+usa alguna y `1` si no, así que un modelo low-poly se sigue guardando igual byte a byte.
 
 JSON en UTF-8, claves en PascalCase. Una clave que falta toma su valor por defecto y una desconocida se avisa en el
 log. Sistema de coordenadas: diestro, **Y hacia arriba**, el modelo mira hacia **-Z**, 1 unidad = 1 metro. Los
@@ -57,7 +62,7 @@ cuaterniones normalizados `[X, Y, Z, W]`.
 | Nivel | Clave | Tipo (por defecto) | Significado |
 |---|---|---|---|
 | Modelo | `Format` | texto (obligatorio) | Tiene que ser `"bitmodel"`; si no, no se carga |
-| | `Version` | entero (1) | Una mayor que 1 se carga con un aviso |
+| | `Version` | entero (1) | 1 o 2; una mayor se carga con un aviso |
 | | `Materials` | objeto ({}) | Materiales por nombre |
 | | `Meshes` | objeto ({}) | Mallas por nombre |
 | | `Nodes` | lista ([]) | Nodos; un padre siempre va antes que sus hijos |
@@ -68,6 +73,16 @@ cuaterniones normalizados `[X, Y, Z, W]`.
 | | `Filter` | texto ("nearest") | `"nearest"` o `"linear"` |
 | | `Emission` | número (0) | Se suma su color × 1.5 × `Emission` encima de la luz: brilla aunque esté a oscuras (y por encima de 1 entra en el bloom) |
 | | `Unlit` | booleano (false) | Ignora la luz: se ve con su color tal cual |
+| | `Metallic` | número 0..1 (0) | v2. 0: dieléctrico (plástico, madera, piel); 1: metal, su color tiñe sus reflejos |
+| | `Roughness` | número 0..1 (1) | v2. 0: espejo; 1: mate del todo |
+| | `Normal` | texto ("") | v2. Mapa de normales en espacio tangente (convención de glTF y OpenGL: verde hacia arriba). No hacen falta tangentes en la malla: salen de las UV |
+| | `NormalScale` | número (1) | v2. Cuánto doblan las normales del mapa |
+| | `MetalRough` | texto ("") | v2. Verde: rugosidad, azul: metal (como glTF); multiplican `Roughness` y `Metallic` |
+| | `Occlusion` | texto ("") | v2. Rojo: cuánta luz ambiente llega a cada punto (oclusión horneada) |
+| | `OcclusionStrength` | número 0..1 (1) | v2. Cuánto cuenta ese mapa |
+| | `EmissionTexture` | texto ("") | v2. Lo que brilla (× `Emission`) en vez del color base |
+| | `AlphaCutoff` | número 0..1 (0) | v2. Por encima de 0: los píxeles con alfa menor se recortan y el resto es opaco (hojas, pelo, vallas) |
+| | `DoubleSided` | booleano (false) | v2. Se dibujan las dos caras de cada triángulo (hojas finas, tela) |
 | Malla | `Material` | texto ("") | Nombre del material; si no existe, blanco |
 | | `Positions` | números | X, Y, Z por vértice (obligatorio) |
 | | `Normals` | números ([]) | X, Y, Z por vértice; vacío, BitMotor calcula normales planas por cara |
@@ -97,7 +112,10 @@ Reglas:
 - Antes del primer tiempo vale el primer valor y después del último, el último.
 - Escribir números con como mucho 6 decimales y las claves en el orden de este documento, para que los diffs de
   git sean pequeños y el fichero sea determinista.
-- Las texturas son PNG RGBA de 8 bits en sRGB, como las de BitSprite. Una textura de paleta (una franja de colores
+- Los mapas usan el mismo `Filter` que `Texture`. Con `"linear"` tienen mipmaps y filtrado anisótropo, y todas las
+  texturas de los modelos se repiten (UV mayores que 1 hacen mosaico).
+- Las texturas son PNG (o JPEG) RGBA de 8 bits en sRGB, como las de BitSprite; los mapas de normales, de metal y
+  rugosidad y de oclusión son datos lineales. Una textura de paleta (una franja de colores
   y UVs que apuntan a cada color) es la forma recomendada de colorear modelos low-poly.
 
 ## Cómo se dibuja
@@ -108,7 +126,13 @@ Reglas:
 - Color final: `textura × color de vértice × Color del material × Tint del Model3D`. Si `Unlit`, ese color se ve
   tal cual (más la emisión); si no, se multiplica por la luz `ambiente + sol × max(0, n · −dirección)` + cada luz
   puntual `color × (1 − d / radio)² × (0.25 + 0.75 × max(0, n · l))`, y se le suma `color × 1.5 × Emission`.
-- Con `Config::LinearColor`, los colores y las texturas se convierten de sRGB a lineal antes de todo esto.
+- **Materiales físicos** (los que tienen `Metallic` distinto de 0, `Roughness` distinto de 1 o algún mapa de
+  normales, de metal y rugosidad o de oclusión): difusa `color × (1 − metal)` más el brillo especular GGX (Smith,
+  Schlick) del sol y de cada luz puntual, con `F0 = mezcla(0.04, color, metal)`; la luz ambiente se refleja con la
+  aproximación analítica de Karis y la tapa el mapa de oclusión. Las bandas de `SetStepped` no se aplican.
+- Con `Config::LinearColor`, los colores y las texturas se convierten de sRGB a lineal antes de todo esto. Para
+  verse realista conviene `Config::LinearColor` y `Lighting::SetToneMap(ToneMap::Filmic)` (curva ACES), con
+  `Lighting::SetExposure` para la exposición.
 - Los modelos con transparencia (alfa del color del material o del `Tint` menor que 1) se dibujan después de los
   opacos, del más lejano al más cercano.
 
@@ -128,8 +152,9 @@ encima, y un juego o una herramienta pueden usar lo mismo:
   insetar, subdividir, espejo, pintar, UV de paleta...), cambios del modelo que mantienen las referencias
   (renombrar, quitar nodos, cambiar de padre), claves de animación, `Pose` sin crear el modelo, `Check` (lo que
   estaría mal) e importar y exportar OBJ con su MTL y glTF 2.0 (`ImportGltf` lee `.glb` y `.gltf`; `ExportGlb`
-  escribe `.glb`, con los sockets y los eventos en sus `extras` para que vuelvan al importarlo). Lo que BitMotor no
-  dibuja (huesos, morph targets, mapas PBR, curvas cúbicas) se deja fuera o se aproxima y queda en `Notes`.
+  escribe `.glb`, con los sockets y los eventos en sus `extras` para que vuelvan al importarlo). Los materiales
+  metal/rugosidad pasan con todos sus mapas en los dos sentidos. Lo que BitMotor no dibuja (huesos, morph
+  targets, curvas cúbicas) se deja fuera o se aproxima y queda en `Notes`.
 
 ```cpp
 ModelFile file;

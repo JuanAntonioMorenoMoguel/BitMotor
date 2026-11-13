@@ -532,8 +532,8 @@ void DrawScene(SDL_GPUCommandBuffer* commands) {
                            FlashAmount(),
                            float(ScreenWidth),
                            float(ScreenHeight),
-                           0,
-                           0};
+                           Lighting::Exposure(),
+                           Lighting::Tone() == ToneMap::Filmic ? 1.0f : 0.0f};
     pass = BeginPass(commands, {ScreenTarget.Texture}, SDL_GPU_LOADOP_DONT_CARE);
     SDL_PushGPUFragmentUniformData(commands, 0, composite, sizeof(composite));
     Fullscreen(pass, Pipeline.Composite, {{SceneTarget.Texture, NearestSampler}, {BloomA.Texture, LinearSampler}});
