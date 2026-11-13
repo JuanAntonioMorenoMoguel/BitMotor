@@ -45,6 +45,28 @@ struct Material {
     float Emission = 0;
     // Ignores the light: shown with its own colour.
     bool Unlit = false;
+
+    // Physically based look (metal/roughness, as glTF). Metallic 0 and Roughness 1 without maps: matte, lit
+    // exactly as before these existed. Realistic models want Config::LinearColor and Lighting::ToneMap::Filmic.
+    // 0: a dielectric (plastic, wood, skin); 1: a metal (its colour tints its reflections).
+    float Metallic = 0;
+    // 0: a mirror; 1: fully rough (no visible highlight).
+    float Roughness = 1;
+    // Tangent-space normal map (OpenGL convention, green up, as glTF), bent by NormalScale. The tangents come
+    // from the UVs in the shader: meshes need no tangents.
+    Texture NormalMap = {};
+    float NormalScale = 1;
+    // Green: roughness, blue: metal (as glTF); they multiply Roughness and Metallic.
+    Texture MetalRoughMap = {};
+    // Red: how much ambient light reaches each point (baked ambient occlusion).
+    Texture OcclusionMap = {};
+    float OcclusionStrength = 1;
+    // Its colour glows (times Emission) instead of the base colour.
+    Texture EmissionMap = {};
+    // Above 0: pixels whose alpha is below it are cut out and the rest is opaque (leaves, hair, fences).
+    float AlphaCutoff = 0;
+    // Both sides of each triangle are drawn (thin leaves, cloth).
+    bool DoubleSided = false;
 };
 
 struct ModelFile;

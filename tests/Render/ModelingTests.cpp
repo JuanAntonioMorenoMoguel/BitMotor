@@ -169,6 +169,35 @@ TEST(ModelFileBecomesTheSameModelAsParse) {
     CHECK(a.Socket("handle").has_value() && b.Socket("handle").has_value());
 }
 
+TEST(ModelFileWritesPhysicalMaterialsAsVersion2) {
+    ModelFile file = *ModelFile::Parse(Example);
+    CHECK(file.ToJson().find("\"Version\": 1") != std::string::npos); // nothing new: still version 1
+    ModelFile::Material& skin = file.Materials["skin"];
+    skin.Metallic = 0.25f;
+    skin.Roughness = 0.5f;
+    skin.Normal = "hero_n.png";
+    skin.NormalScale = 0.8f;
+    skin.MetalRough = "hero_mr.png";
+    skin.Occlusion = "hero_ao.png";
+    skin.OcclusionStrength = 0.5f;
+    skin.EmissionTexture = "hero_e.png";
+    skin.AlphaCutoff = 0.5f;
+    skin.DoubleSided = true;
+    CHECK(skin.Physical());
+    const std::string json = file.ToJson();
+    CHECK(json.find("\"Version\": 2") != std::string::npos);
+    CHECK(json.find("\"Roughness\": 0.5, \"Normal\": \"hero_n.png\", \"NormalScale\": 0.8") != std::string::npos);
+    const auto back = ModelFile::Parse(json);
+    CHECK(back.has_value());
+    CHECK(back->Materials.at("skin") == skin);
+    CHECK_EQ(back->ToJson(), json);
+    // Out of range values are clamped.
+    const auto clamped = ModelFile::Parse(
+        R"({"Format": "bitmodel", "Version": 2, "Materials": {"m": {"Metallic": 3, "Roughness": -1}}})");
+    CHECK_NEAR(clamped->Materials.at("m").Metallic, 1.0f, 0.0f);
+    CHECK_NEAR(clamped->Materials.at("m").Roughness, 0.0f, 0.0f);
+}
+
 TEST(ModelFileSavesToDisk) {
     const auto file = ModelFile::Parse(Example);
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "BitMotorTests" / "model.bitmodel";
@@ -550,6 +579,39 @@ TEST(ModelingGlbGoesThereAndBack) {
         for (std::size_t i = 0; i < pa.size(); ++i)
             for (int k = 0; k < 16; ++k) CHECK_NEAR(pa[i].M[k], pb[i].M[k], 1e-4f);
     }
+}
+
+TEST(ModelingGltfKeepsPhysicalMaterials) {
+    ModelFile file = *ModelFile::Parse(Example);
+    ModelFile::Material& skin = file.Materials["skin"];
+    skin.Metallic = 1;
+    skin.Roughness = 0.3f;
+    skin.Normal = "hero_n.png";
+    skin.NormalScale = 0.5f;
+    skin.MetalRough = "hero_mr.png";
+    skin.Occlusion = "hero_ao.png";
+    skin.OcclusionStrength = 0.75f;
+    skin.EmissionTexture = "hero_e.png";
+    skin.Emission = 1;
+    skin.AlphaCutoff = 0.4f;
+    skin.DoubleSided = true;
+    const auto back = Modeling::ImportGltf(Modeling::ExportGlb(file), {}, "crate");
+    CHECK(back.has_value());
+    CHECK(back->Notes.empty());
+    const ModelFile::Material& b = back->File.Materials.at("skin");
+    CHECK_NEAR(b.Metallic, 1.0f, 1e-6f);
+    CHECK_NEAR(b.Roughness, 0.3f, 1e-6f);
+    CHECK_EQ(b.Texture, std::string("hero.png"));
+    CHECK_EQ(b.Normal, std::string("hero_n.png"));
+    CHECK_NEAR(b.NormalScale, 0.5f, 1e-6f);
+    CHECK_EQ(b.MetalRough, std::string("hero_mr.png"));
+    CHECK_EQ(b.Occlusion, std::string("hero_ao.png"));
+    CHECK_NEAR(b.OcclusionStrength, 0.75f, 1e-6f);
+    CHECK_EQ(b.EmissionTexture, std::string("hero_e.png"));
+    CHECK_NEAR(b.AlphaCutoff, 0.4f, 1e-6f);
+    CHECK(b.DoubleSided);
+    // A plain material stays plain (metal 0, rough 1), and so stays version 1.
+    CHECK(!back->File.Materials.at("wood").Physical());
 }
 
 TEST(ModelingReadsGltfText) {

@@ -1,5 +1,6 @@
 #version 450
-// The lit scene + bloom onto the screen target, with the screen effects: a soft tone curve (when lit),
+// The lit scene + bloom onto the screen target, with the screen effects: the exposure and a tone curve (the
+// soft one when lit, or the filmic ACES one),
 // chromatic aberration, saturation, vignette, grain and the screen flash. The Hud is drawn after this.
 layout(set = 2, binding = 0) uniform sampler2D Scene;
 layout(set = 2, binding = 1) uniform sampler2D Bloom;
@@ -7,7 +8,7 @@ layout(set = 3, binding = 0) uniform Params {
     vec4 A; // bloom strength, tone curve on, time, linear colour
     vec4 B; // vignette, grain, aberration (pixels), saturation
     vec4 C; // flash rgb, flash amount
-    vec4 D; // screen size xy, -, -
+    vec4 D; // screen size xy, exposure, filmic
 };
 layout(location = 0) in vec2 InUv;
 layout(location = 0) out vec4 Out;
@@ -24,6 +25,13 @@ vec3 ToneCurve(vec3 c) {
     return min(c, 0.8) + 0.2 * (1.0 - exp(-over / 0.2));
 }
 
+// ACES filmic curve (Narkowicz' fit), for physically lit scenes: highlights roll off and colours desaturate
+// towards white the way film does.
+vec3 Filmic(vec3 c) {
+    c *= 0.6;
+    return clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+}
+
 void main() {
     vec3 color;
     if (B.z > 0.0) {
@@ -33,7 +41,11 @@ void main() {
         color = texture(Scene, InUv).rgb;
     }
     if (A.x > 0.0) color += texture(Bloom, InUv).rgb * A.x;
-    if (A.y > 0.5) color = ToneCurve(color);
+    color *= D.z;
+    if (D.w > 0.5)
+        color = Filmic(color);
+    else if (A.y > 0.5)
+        color = ToneCurve(color);
     float luma = dot(color, vec3(0.299, 0.587, 0.114));
     color = mix(vec3(luma), color, B.w);
     if (B.x > 0.0) {

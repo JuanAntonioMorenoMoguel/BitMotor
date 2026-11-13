@@ -49,6 +49,10 @@ const ScreenEffects& Effects();
 void Flash(Color color = Colors::White, float seconds = 0.15f);
 } // namespace Screen
 
+// How the HDR scene becomes screen colours. Soft: linear up to 0.8 and a gentle shoulder, only while Lighting
+// is on (keeps a palette as it is). Filmic: the ACES curve, always, for realistic 3D (with Config::LinearColor).
+enum class ToneMap { Soft, Filmic };
+
 namespace Lighting {
 void Enable(bool on);
 bool Enabled();
@@ -63,6 +67,11 @@ bool Stepped();
 void SetBloom(float strength, float threshold = 0.8f);
 float Bloom();
 float BloomThreshold();
+void SetToneMap(ToneMap tone);
+ToneMap Tone();
+// Multiplies the whole scene before the tone curve (1: as it is; 2: one stop brighter).
+void SetExposure(float exposure);
+float Exposure();
 } // namespace Lighting
 
 } // namespace BitMotor

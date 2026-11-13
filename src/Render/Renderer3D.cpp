@@ -1,6 +1,7 @@
 // 3D on the GPU: the queued models into the HDR scene, after the Background layer and before the World one,
-// with a depth buffer of their own. One pipeline: vertices with position, normal, uv and colour; a texture
-// (white when the material has none); ambient + sun + up to 8 point lights per model.
+// with a depth buffer of their own. Two pipelines (back faces culled, or both sides drawn): vertices with
+// position, normal, uv and colour; five textures (colour, normal, metal-rough, occlusion, emission: plain ones
+// when the material has none), sampled repeating; ambient + sun + up to 8 point lights per model.
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Core/Screen.h"
 #include "BitMotor/Math/Functions.h"
@@ -25,10 +26,14 @@ constexpr SDL_GPUTextureFormat SceneFormat = SDL_GPU_TEXTUREFORMAT_R16G16B16A16_
 
 std::vector<MeshData*> Meshes; // every live mesh, to release their buffers when the device stops
 SDL_GPUGraphicsPipeline* Pipeline = nullptr;
+SDL_GPUGraphicsPipeline* DoubleSidedPipeline = nullptr;
+SDL_GPUSampler* RepeatNearest = nullptr;
+SDL_GPUSampler* RepeatLinear = nullptr;
 SDL_GPUTexture* Depth = nullptr;
 SDL_GPUTextureFormat DepthFormat = SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
 unsigned DepthWidth = 0, DepthHeight = 0;
 Texture White;
+Texture FlatNormal; // (0.5, 0.5, 1): straight out
 
 struct ObjectUniforms {
     Mat4 ViewProjection;
@@ -45,7 +50,31 @@ struct LightUniforms {
     float Options[4];
     float Position[8][4];
     float Colour[8][4];
+    float Eye[4];
+    float Surface[4];
+    float Maps[4];
 };
+
+// Models repeat their textures (UVs past 1 tile them). Smooth ones blend between mipmaps, with anisotropy
+// when the GPU has it, so detailed textures stay sharp at a slant and do not shimmer far away.
+SDL_GPUSampler* MakeRepeatSampler(SDL_GPUDevice* device, bool smooth) {
+    SDL_GPUSamplerCreateInfo info{};
+    info.min_filter = info.mag_filter = smooth ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;
+    info.mipmap_mode = smooth ? SDL_GPU_SAMPLERMIPMAPMODE_LINEAR : SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;
+    info.address_mode_u = info.address_mode_v = info.address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
+    info.min_lod = 0;
+    info.max_lod = smooth ? 1000.0f : 0.0f;
+    info.enable_anisotropy = smooth;
+    info.max_anisotropy = smooth ? 8.0f : 1.0f;
+    SDL_GPUSampler* sampler = SDL_CreateGPUSampler(device, &info);
+    if (!sampler && smooth) { // anisotropy is optional
+        info.enable_anisotropy = false;
+        info.max_anisotropy = 1;
+        sampler = SDL_CreateGPUSampler(device, &info);
+    }
+    if (!sampler) Log::Error("SDL_CreateGPUSampler: {}", SDL_GetError());
+    return sampler;
+}
 
 SDL_GPUShader* MakeShader(const std::uint32_t* code, std::size_t bytes, SDL_GPUShaderStage stage, Uint32 uniforms,
                           Uint32 samplers) {
@@ -137,6 +166,11 @@ Mat4 NormalMatrix(const Mat4& world) {
 
 void Copy(float out[4], Color c) { out[0] = c.R, out[1] = c.G, out[2] = c.B, out[3] = c.A; }
 
+// Lit with metal/roughness and the maps, or the plain diffuse light of before.
+bool Physical(const Material& m) {
+    return m.Metallic != 0 || m.Roughness != 1 || m.NormalMap || m.MetalRoughMap || m.OcclusionMap;
+}
+
 } // namespace
 
 MeshData::MeshData() { Meshes.push_back(this); }
@@ -154,7 +188,7 @@ bool StartModels() {
     SDL_GPUShader* vertex =
         MakeShader(Shaders::ModelVert, sizeof(Shaders::ModelVert), SDL_GPU_SHADERSTAGE_VERTEX, 1, 0);
     SDL_GPUShader* fragment =
-        MakeShader(Shaders::ModelFrag, sizeof(Shaders::ModelFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+        MakeShader(Shaders::ModelFrag, sizeof(Shaders::ModelFrag), SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 5);
     SDL_GPUColorTargetDescription target{};
     target.format = SceneFormat;
     target.blend_state.enable_blend = true;
@@ -189,23 +223,34 @@ bool StartModels() {
     info.target_info.has_depth_stencil_target = true;
     info.target_info.depth_stencil_format = DepthFormat;
     Pipeline = vertex && fragment ? SDL_CreateGPUGraphicsPipeline(device, &info) : nullptr;
+    info.rasterizer_state.cull_mode = SDL_GPU_CULLMODE_NONE;
+    DoubleSidedPipeline = vertex && fragment ? SDL_CreateGPUGraphicsPipeline(device, &info) : nullptr;
     if (vertex) SDL_ReleaseGPUShader(device, vertex);
     if (fragment) SDL_ReleaseGPUShader(device, fragment);
-    if (!Pipeline) Log::Error("The 3D pipeline: {}", SDL_GetError());
+    if (!Pipeline || !DoubleSidedPipeline) Log::Error("The 3D pipeline: {}", SDL_GetError());
+    RepeatNearest = MakeRepeatSampler(device, false);
+    RepeatLinear = MakeRepeatSampler(device, true);
     const std::uint8_t white[4] = {255, 255, 255, 255};
     White = Texture::FromPixels(1, 1, white);
-    return Pipeline != nullptr;
+    const std::uint8_t flat[4] = {128, 128, 255, 255};
+    FlatNormal = Texture::FromPixels(1, 1, flat);
+    return Pipeline && DoubleSidedPipeline && RepeatNearest && RepeatLinear;
 }
 
 void StopModels() {
     SDL_GPUDevice* device = GpuDevice();
     ReleaseMeshes();
     if (Pipeline && device) SDL_ReleaseGPUGraphicsPipeline(device, Pipeline);
+    if (DoubleSidedPipeline && device) SDL_ReleaseGPUGraphicsPipeline(device, DoubleSidedPipeline);
+    if (RepeatNearest && device) SDL_ReleaseGPUSampler(device, RepeatNearest);
+    if (RepeatLinear && device) SDL_ReleaseGPUSampler(device, RepeatLinear);
     if (Depth && device) SDL_ReleaseGPUTexture(device, Depth);
-    Pipeline = nullptr;
+    Pipeline = DoubleSidedPipeline = nullptr;
+    RepeatNearest = RepeatLinear = nullptr;
     Depth = nullptr;
     DepthWidth = DepthHeight = 0;
     White = {};
+    FlatNormal = {};
     ResetModels();
 }
 
@@ -221,7 +266,7 @@ void UploadModels(SDL_GPUCopyPass* copy) {
 
 void DrawModels(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* scene, unsigned width, unsigned height) {
     std::vector<ModelDraw>& queue = ModelQueue();
-    if (queue.empty() || !Pipeline || !PrepareDepth(width, height)) return;
+    if (queue.empty() || !Pipeline || !DoubleSidedPipeline || !PrepareDepth(width, height)) return;
     const Camera3D& camera = Screen::CurrentCamera3D();
     const Mat4 viewProjection = camera.ViewProjection();
     const bool linear = LinearColor();
@@ -249,7 +294,8 @@ void DrawModels(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* scene, unsigned 
     depth.stencil_store_op = SDL_GPU_STOREOP_DONT_CARE;
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &color, 1, &depth);
     if (!pass) return;
-    SDL_BindGPUGraphicsPipeline(pass, Pipeline);
+    SDL_GPUGraphicsPipeline* bound = Pipeline;
+    SDL_BindGPUGraphicsPipeline(pass, bound);
     // The camera's viewport, from logical pixels to the scene's.
     if (camera.Viewport.Width > 0 && camera.Viewport.Height > 0) {
         const Vec2 size = Screen::Size();
@@ -274,6 +320,7 @@ void DrawModels(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* scene, unsigned 
     Copy(light.SunColor, ToLinear(Lighting3D::SunColor()));
     Copy(light.Ambient, ToLinear(Lighting3D::Ambient()));
     light.Ambient[3] = Lighting::Stepped() ? 1.0f : 0.0f;
+    light.Eye[0] = camera.Position.X, light.Eye[1] = camera.Position.Y, light.Eye[2] = camera.Position.Z;
     std::vector<const PointLight3D*> lights;
     for (const PointLight3D& l : PointLightQueue()) lights.push_back(&l);
 
@@ -307,13 +354,30 @@ void DrawModels(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* scene, unsigned 
         light.Options[1] = draw.Look.Unlit ? 1.0f : 0.0f;
         light.Options[2] = linear ? 1.0f : 0.0f;
         light.Options[3] = float(count);
+        const Material& look = draw.Look;
+        light.Eye[3] = look.AlphaCutoff;
+        light.Surface[0] = look.Metallic;
+        light.Surface[1] = look.Roughness;
+        light.Surface[2] = Physical(look) ? 1.0f : 0.0f;
+        light.Maps[0] = look.NormalMap ? (look.NormalScale != 0 ? look.NormalScale : 1e-6f) : 0.0f;
+        light.Maps[1] = look.MetalRoughMap ? 1.0f : 0.0f;
+        light.Maps[2] = look.OcclusionMap ? std::max(look.OcclusionStrength, 1e-6f) : 0.0f;
+        light.Maps[3] = look.EmissionMap ? 1.0f : 0.0f;
         SDL_PushGPUFragmentUniformData(commands, 0, &light, sizeof(light));
 
-        const Texture& image = draw.Look.Image ? draw.Look.Image : White;
-        SDL_GPUTexture* texture = GpuTexture(*image.Internal());
-        if (!texture) texture = GpuTexture(*White.Internal());
-        SDL_GPUTextureSamplerBinding binding{texture, SamplerFor(image.GetFilter())};
-        SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+        SDL_GPUGraphicsPipeline* wanted = look.DoubleSided ? DoubleSidedPipeline : Pipeline;
+        if (wanted != bound) SDL_BindGPUGraphicsPipeline(pass, bound = wanted);
+        auto bind = [&](const Texture& texture, const Texture& fallback) {
+            const Texture& image = texture ? texture : fallback;
+            SDL_GPUTexture* native = GpuTexture(*image.Internal());
+            if (!native) native = GpuTexture(*fallback.Internal());
+            return SDL_GPUTextureSamplerBinding{native,
+                                                image.GetFilter() == Filter::Linear ? RepeatLinear : RepeatNearest};
+        };
+        const SDL_GPUTextureSamplerBinding bindings[5] = {
+            bind(look.Image, White), bind(look.NormalMap, FlatNormal), bind(look.MetalRoughMap, White),
+            bind(look.OcclusionMap, White), bind(look.EmissionMap, White)};
+        SDL_BindGPUFragmentSamplers(pass, 0, bindings, 5);
         SDL_GPUBufferBinding vertices{mesh.VertexBuffer, 0};
         SDL_BindGPUVertexBuffers(pass, 0, &vertices, 1);
         SDL_GPUBufferBinding indices{mesh.IndexBuffer, 0};

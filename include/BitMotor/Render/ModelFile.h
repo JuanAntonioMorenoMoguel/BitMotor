@@ -33,6 +33,20 @@ struct ModelFile {
         BitMotor::Filter TextureFilter = BitMotor::Filter::Nearest;
         float Emission = 0;
         bool Unlit = false;
+        // Version 2 (BitMotor::Material has what each one does). The maps are PNGs next to the .bitmodel,
+        // with the same TextureFilter.
+        float Metallic = 0;
+        float Roughness = 1;
+        std::string Normal;
+        float NormalScale = 1;
+        std::string MetalRough;
+        std::string Occlusion;
+        float OcclusionStrength = 1;
+        std::string EmissionTexture;
+        float AlphaCutoff = 0;
+        bool DoubleSided = false;
+        // Uses something of version 2.
+        bool Physical() const;
         bool operator==(const Material&) const = default;
     };
 

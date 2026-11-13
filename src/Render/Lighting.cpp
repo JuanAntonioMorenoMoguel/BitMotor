@@ -10,6 +10,8 @@ bool LightingOn = false;
 Color AmbientLight = Color::Hex(0x3A4055);
 bool SteppedLight = false;
 float BloomStrength = 0, BloomLevel = 0.8f;
+ToneMap CurrentTone = ToneMap::Soft;
+float CurrentExposure = 1;
 ScreenEffects CurrentEffects;
 std::vector<Detail::LightInstance> Lights;
 
@@ -50,6 +52,10 @@ void SetBloom(float strength, float threshold) {
 }
 float Bloom() { return BloomStrength; }
 float BloomThreshold() { return BloomLevel; }
+void SetToneMap(ToneMap tone) { CurrentTone = tone; }
+ToneMap Tone() { return CurrentTone; }
+void SetExposure(float exposure) { CurrentExposure = Max(exposure, 0.0f); }
+float Exposure() { return CurrentExposure; }
 } // namespace Lighting
 
 namespace Detail {
