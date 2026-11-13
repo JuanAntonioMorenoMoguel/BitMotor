@@ -5,6 +5,7 @@
 #include "BitMotor/Render/ModelFile.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string>
@@ -183,5 +184,34 @@ struct ObjFiles {
 // the OBJ's mtllib line.
 ObjFiles ExportObj(const ModelFile& file, std::string_view mtlName = "model.mtl", std::string_view animation = {},
                    float seconds = 0);
+
+// ---------------------------------------------------------------- glTF
+
+struct GltfImage {
+    // The file name the model's material uses ("robot_0.png"): write Bytes there, next to the .bitmodel.
+    std::string Name;
+    std::vector<std::uint8_t> Bytes;
+};
+struct GltfImport {
+    ModelFile File;
+    // Images that were inside the glTF (in a .glb or as data). Images it only names keep their uri as the
+    // material's Texture and are not here.
+    std::vector<GltfImage> Images;
+    // What could not come across as it was (skins, morph targets, cubic curves...), for an import report.
+    std::vector<std::string> Notes;
+};
+// Reads a file a .gltf names (an external .bin buffer) by its uri, or nullopt.
+using GltfFiles = std::function<std::optional<std::vector<std::uint8_t>>(std::string_view uri)>;
+// A glTF 2.0 model (a .glb, or the text of a .gltf) as a model: its default scene's nodes with their
+// position, rotation and scale (matrices are split into them), one mesh per triangle primitive with
+// positions, normals, the first UVs and vertex colours, materials (base colour and its texture, emission,
+// KHR_materials_unlit) and node animations (linear, step; cubic ones keep only their values). Skins and morph
+// targets are left out and noted. Sockets and events come back from files that ExportGlb wrote. nullopt
+// if it cannot be read.
+std::optional<GltfImport> ImportGltf(std::span<const std::uint8_t> bytes, const GltfFiles& files = {},
+                                     std::string_view name = "gltf");
+// The model as a .glb: meshes, materials (textures by their path, not embedded), nodes, animations, and the
+// sockets and events in the file's extras. The same model always gives the same bytes.
+std::vector<std::uint8_t> ExportGlb(const ModelFile& file);
 
 } // namespace BitMotor::Modeling

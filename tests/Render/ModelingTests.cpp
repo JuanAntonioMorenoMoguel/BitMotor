@@ -487,3 +487,114 @@ TEST(ModelingExportsObjThatReadsBack) {
     CHECK(back->Materials.at("glow").Unlit);
     CHECK_EQ(Modeling::ExportObj(file).Obj, Modeling::ExportObj(file).Obj);
 }
+
+// ---------------------------------------------------------------- glTF
+
+namespace {
+
+std::string Base64Of(const std::vector<std::uint8_t>& bytes) {
+    static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (std::size_t i = 0; i < bytes.size(); i += 3) {
+        const unsigned n = unsigned(bytes[i]) << 16 | (i + 1 < bytes.size() ? unsigned(bytes[i + 1]) << 8 : 0u) |
+                           (i + 2 < bytes.size() ? unsigned(bytes[i + 2]) : 0u);
+        out += abc[n >> 18 & 63];
+        out += abc[n >> 12 & 63];
+        out += i + 1 < bytes.size() ? abc[n >> 6 & 63] : '=';
+        out += i + 2 < bytes.size() ? abc[n & 63] : '=';
+    }
+    return out;
+}
+
+template <class T> void Put(std::vector<std::uint8_t>& out, T value) {
+    const auto* p = reinterpret_cast<const std::uint8_t*>(&value);
+    out.insert(out.end(), p, p + sizeof(T));
+}
+
+std::vector<std::uint8_t> TextBytes(const std::string& text) { return {text.begin(), text.end()}; }
+
+} // namespace
+
+TEST(ModelingGlbGoesThereAndBack) {
+    auto file = *ModelFile::Parse(Example);
+    file.Materials["glow"].Emission = 2;
+    const std::vector<std::uint8_t> glb = Modeling::ExportGlb(file);
+    CHECK(glb.size() > 20);
+    CHECK(glb == Modeling::ExportGlb(file)); // the same bytes every time
+    const auto back = Modeling::ImportGltf(glb, {}, "crate");
+    CHECK(back.has_value());
+    CHECK(back->Notes.empty());
+    const ModelFile& b = back->File;
+    CHECK_EQ(b.Nodes.size(), file.Nodes.size());
+    CHECK_EQ(b.Nodes[1].Name, std::string("lid"));
+    CHECK_EQ(b.Nodes[1].Parent, 0);
+    CheckVec(b.Nodes[1].Scale, {1, 0.2f, 1});
+    const ModelFile::Mesh& crate = b.Meshes.at("crate");
+    CHECK_EQ(Modeling::FaceCount(crate), 2);
+    CHECK_EQ(crate.Material, std::string("wood"));
+    CHECK_NEAR(crate.Vertices[0].Tint.R, 1.0f, 1e-4f);
+    CHECK_NEAR(b.Materials.at("wood").Tint.G, 0.35f, 1e-4f); // through linear and back
+    CHECK_NEAR(b.Materials.at("glow").Emission, 2.0f, 1e-5f);
+    CHECK(b.Materials.at("glow").Unlit);
+    CHECK_EQ(b.Materials.at("skin").Texture, std::string("hero.png"));
+    CHECK(b.Materials.at("skin").TextureFilter == Filter::Linear);
+    const ModelFile::Animation& open = b.Animations.at("open");
+    CHECK(!open.Loop);
+    CHECK_NEAR(open.Length(), 0.5f, 1e-6f);
+    CHECK_EQ(open.Tracks.size(), std::size_t(2));
+    CHECK(open.Tracks[1].Step);
+    CHECK_EQ(open.Events.at("creak").size(), std::size_t(1));
+    CHECK_EQ(b.Sockets.at("handle").Node, std::string("lid"));
+    for (const float t : {0.0f, 0.2f, 0.5f}) {
+        const auto pa = Modeling::Pose(file, "open", t), pb = Modeling::Pose(b, "open", t);
+        for (std::size_t i = 0; i < pa.size(); ++i)
+            for (int k = 0; k < 16; ++k) CHECK_NEAR(pa[i].M[k], pb[i].M[k], 1e-4f);
+    }
+}
+
+TEST(ModelingReadsGltfText) {
+    // Two primitives (a triangle and a line), positions as floats, indices as bytes, a matrix node and a cubic
+    // rotation curve, all in a data: buffer.
+    std::vector<std::uint8_t> bin;
+    for (const float f : {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f}) Put(bin, f); // 0: 36 bytes
+    for (const int i : {0, 1, 2, 0}) Put(bin, std::uint8_t(i));                      // 36: 3 indices + pad
+    for (const float f : {0.f, 1.f}) Put(bin, f);                                    // 40: times
+    for (int k = 0; k < 2; ++k)                                                      // 48: 2 x (in, v, out)
+        for (int part = 0; part < 3; ++part)
+            for (const float f : {0.f, 0.f, 0.f, 1.f}) Put(bin, f);
+    const std::string gltf = R"({
+      "asset": {"version": "2.0"},
+      "buffers": [{"byteLength": )" +
+                             std::to_string(bin.size()) + R"(, "uri": "data:application/octet-stream;base64,)" +
+                             Base64Of(bin) + R"("}],
+      "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 36}, {"buffer": 0, "byteOffset": 36, "byteLength": 3},
+                      {"buffer": 0, "byteOffset": 40, "byteLength": 8}, {"buffer": 0, "byteOffset": 48, "byteLength": 96}],
+      "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"},
+                    {"bufferView": 1, "componentType": 5121, "count": 3, "type": "SCALAR"},
+                    {"bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR"},
+                    {"bufferView": 3, "componentType": 5126, "count": 6, "type": "VEC4"}],
+      "materials": [{"name": "red", "pbrMetallicRoughness": {"baseColorFactor": [1, 0, 0, 1]}}],
+      "meshes": [{"name": "tri", "primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "material": 0},
+                                              {"attributes": {"POSITION": 0}, "mode": 1}]}],
+      "nodes": [{"name": "holder", "children": [1]},
+                {"name": "shape", "mesh": 0, "matrix": [2,0,0,0, 0,2,0,0, 0,0,2,0, 1,2,3,1], "skin": 0}],
+      "scenes": [{"nodes": [0]}],
+      "animations": [{"name": "spin", "samplers": [{"input": 2, "output": 3, "interpolation": "CUBICSPLINE"}],
+                      "channels": [{"sampler": 0, "target": {"node": 1, "path": "rotation"}}]}]
+    })";
+    const auto result = Modeling::ImportGltf(TextBytes(gltf), {}, "test");
+    CHECK(result.has_value());
+    const ModelFile& f = result->File;
+    CHECK_EQ(f.Nodes.size(), std::size_t(2));
+    CHECK_EQ(f.Nodes[1].Name, std::string("shape"));
+    CHECK_EQ(f.Nodes[1].Parent, 0);
+    CheckVec(f.Nodes[1].Position, {1, 2, 3});
+    CheckVec(f.Nodes[1].Scale, {2, 2, 2});
+    CHECK_EQ(f.Meshes.size(), std::size_t(1)); // the line was left out
+    CHECK_EQ(f.Meshes.at("tri.0").Material, std::string("red"));
+    CHECK_EQ(Modeling::FaceCount(f.Meshes.at("tri.0")), 1);
+    CHECK_EQ(f.Animations.at("spin").Tracks.at(0).Values.size(), std::size_t(8));
+    CHECK(result->Notes.size() >= 3); // the line, the skin, the cubic curve
+    CHECK(Modeling::Check(f).empty());
+    CHECK(!Modeling::ImportGltf(TextBytes("{}")).has_value());
+}
