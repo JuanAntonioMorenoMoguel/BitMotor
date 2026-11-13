@@ -96,6 +96,10 @@ std::vector<ModelDraw>& ModelQueue();
 std::vector<PointLight3D>& PointLightQueue();
 // The start of a frame (and Screen::Clear): nothing queued.
 void ResetModels();
+// The frame's Line3D and Point3D as camera-facing quads for `camera` (nullptr when there are none).
+std::shared_ptr<MeshData> OverlayMesh(const Camera3D& camera);
+// Queues them as one unlit model (before the models go to the GPU).
+void QueueOverlay();
 
 // The GPU side (Renderer3D.cpp). Start and Stop follow the renderer's device.
 bool StartModels();

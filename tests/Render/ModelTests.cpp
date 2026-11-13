@@ -174,3 +174,51 @@ TEST(Camera3DProjectsOntoTheScreen) {
     if (Screen::Size().X > 0) CheckVec(ray, {0, 0, -1});
     CHECK(!camera.ToScreen({0, 0, 10}).has_value()); // behind the camera
 }
+
+TEST(CamerasDrawInTheirViewport) {
+    Camera3D camera{.Position = {0, 0, 10}, .Target = {0, 0, 0}, .Viewport = {100, 50, 200, 100}};
+    CHECK(camera.Area().X == 100.0f && camera.Area().Width == 200.0f);
+    const auto centre = camera.ToScreen({0, 0, 0});
+    CHECK(centre.has_value());
+    CHECK_NEAR(centre->X, 200.0f, 1e-3f);
+    CHECK_NEAR(centre->Y, 100.0f, 1e-3f);
+    CheckVec(camera.Ray({200, 100}), {0, 0, -1});
+    CheckVec(camera.RayOrigin({200, 100}), {0, 0, 10});
+    // A point to the right shows to the right, inside the viewport, and its ray goes back through it.
+    const Vec2 right = *camera.ToScreen({2, 0, 0});
+    CHECK(right.X > 200 && right.X < 300);
+    const Vec3 ray = camera.Ray(right);
+    CHECK_NEAR(Dot(ray, Normalize(Vec3{2, 0, -10})), 1.0f, 1e-4f);
+    // Orthographic: parallel rays from the near plane.
+    camera.Orthographic = true;
+    const Vec2 side = *camera.ToScreen({2, 0, 0});
+    CHECK_NEAR(camera.ToScreen({2, 0, -50})->X, side.X, 1e-3f); // no perspective
+    CheckVec(camera.Ray(side), {0, 0, -1});
+    CheckVec(camera.RayOrigin(side), {2, 0, 10 - camera.Near}, 1e-3f);
+}
+
+TEST(LinesAndPointsBecomeQuadsFacingTheCamera) {
+    Detail::ResetModels();
+    const Camera3D camera{.Position = {0, 5, 10}, .Target = {0, 0, 0}, .Viewport = {0, 0, 400, 300}};
+    CHECK(Detail::OverlayMesh(camera) == nullptr);
+    Screen::Draw(Line3D{.From = {-1, 0, 0}, .To = {1, 0, 0}, .Width = 2});
+    Screen::Draw(Point3D{.Position = {0, 1, 0}, .OnTop = true});
+    Screen::Draw(Line3D{.From = {0, 0, 20}, .To = {0, 1, 20}}); // behind the camera: left out
+    const auto mesh = Detail::OverlayMesh(camera);
+    CHECK(mesh != nullptr);
+    CHECK_EQ(mesh->Vertices.size(), std::size_t(8));
+    CHECK_EQ(mesh->Indices.size(), std::size_t(12));
+    for (std::size_t t = 0; t < mesh->Indices.size(); t += 3) {
+        const Vec3 a = mesh->Vertices[mesh->Indices[t]].Position, b = mesh->Vertices[mesh->Indices[t + 1]].Position,
+                   c = mesh->Vertices[mesh->Indices[t + 2]].Position;
+        CHECK(Dot(Cross(b - a, c - a), camera.Position - a) > 0);
+    }
+    // The point on top sits just in front of the camera, where it covers the same spot.
+    const Vec3 p = (mesh->Vertices[4].Position + mesh->Vertices[6].Position) * 0.5f;
+    CHECK(Distance(p, camera.Position) < 1);
+    const Vec2 shown = *camera.ToScreen(p), wanted = *camera.ToScreen({0, 1, 0});
+    CHECK_NEAR(shown.X, wanted.X, 0.01f);
+    CHECK_NEAR(shown.Y, wanted.Y, 0.01f);
+    Detail::ResetModels();
+    CHECK(Detail::OverlayMesh(camera) == nullptr);
+}

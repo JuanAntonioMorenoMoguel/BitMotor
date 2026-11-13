@@ -126,6 +126,8 @@ esquinas suavizadas (cobertura 4×4 por píxel).
 | `BeginGrid(area, Grid&)` / `EndGrid()` | `GridInput` | Rejilla de celdas en un área con scroll: fondo, líneas (más marcadas cada `MajorColumns`/`MajorRows`) y franjas cada `BandColumns`. Dice la celda bajo el ratón, la pulsada (izquierdo y derecho), si se arrastra y desde dónde, y cuándo se suelta. Lo de dentro lo dibuja quien llama con `GridCell(columna, fila)`; `GridSelection(a, b)` marca una selección |
 | `DragSource(area, carga, etiqueta)` | `true` mientras se arrastra | Arrastrar y soltar con una carga de texto: empieza al pulsar en el área y mover 4 píxeles, y la etiqueta sigue al puntero |
 | `DropTarget(area, std::string& carga)` | `true` al soltar encima | Mientras pasa un arrastre por encima, el área se marca con el acento. `Dragged()` dice qué se arrastra |
+| `TreeView(area, elegido, items, abiertos, scroll, TreeMove& mover)` | `true` al cambiar el elegido o al soltar una fila sobre otra | Árbol de filas (`TreeItem { Label, Depth }`, los hijos justo después de su padre): la flecha abre y cierra, Confirmar también; arrastrar una fila sobre otra rellena `mover` (`To` -1: debajo de todas, a la raíz). Para los nodos de un modelo |
+| `ColorPicker(area, Color& color, muestras)` | `true` mientras cambia | Cuadro de saturación y brillo, barra de tono, barra de alfa, una fila de muestras (paleta) y el código hex |
 
 ```cpp
 Fx::Grid steps{.Cell = {24, 24}, .Columns = 64, .Rows = 8, .MajorColumns = 16, .BandColumns = 4};
@@ -194,6 +196,6 @@ girados no se cortan: solo se quitan si quedan enteros fuera. `ScrollArea` y `Gr
 
 ## Pendiente (posibles mejoras)
 
-- `TreeView`, `TableView` y `ColorPicker`; submenús de más de un nivel.
+- `TableView`; submenús de más de un nivel.
 - Escribir el número en un `Spinner` con el teclado.
 - `ListView` con scroll suave por píxeles (ahora va por filas enteras) usando el recorte.

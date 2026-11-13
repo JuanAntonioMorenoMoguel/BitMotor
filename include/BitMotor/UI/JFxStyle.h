@@ -5,6 +5,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // UI::JFxStyle: aesthetics inspired by JavaFX (Modena).
 // Only the look of a JavaFX desktop application: light grey controls with a soft vertical gradient, rounded
@@ -244,6 +245,32 @@ bool DragSource(BitMotor::Rect area, std::string_view payload, std::string_view 
 bool DropTarget(BitMotor::Rect area, std::string& payload);
 // What is being dragged now (empty: nothing).
 std::string_view Dragged();
+
+// A tree of items as rows (a model's nodes, folders). Items go in order with their depth: an item's children
+// come right after it, one deeper. An arrow opens and closes the items with children; `open` keeps one flag
+// per item (it grows to fit, closed items hide their children). A click or Left/Right choose `selected`
+// (as in a ListView) and Confirm opens or closes it; the wheel moves `scroll` (the first row shown). Dragging
+// a row onto another
+// fills `move` with both (`To` -1: onto the empty space under the rows). True on the frame `selected` or
+// `move` changes.
+//     std::vector<Fx::TreeItem> items = {{"root", 0}, {"torso", 1}, {"head", 2}, {"arm", 2}};
+//     Fx::TreeMove move;
+//     Fx::TreeView(area, node, items, open, scroll, move);
+//     if (move.From >= 0) Reparent(move.From, move.To);
+struct TreeItem {
+    std::string Label;
+    int Depth = 0;
+};
+struct TreeMove {
+    int From = -1, To = -1;
+};
+bool TreeView(BitMotor::Rect area, int& selected, std::span<const TreeItem> items, std::vector<bool>& open, int& scroll,
+              TreeMove& move, bool enabled = true);
+
+// A colour chooser in the area: a saturation and brightness square, a hue bar, an alpha bar, and `swatches`
+// (a palette) in a row under them, with the colour and its hex code. Dragging on any of them, or a click on
+// a swatch, changes `color`. True on every frame it changes.
+bool ColorPicker(BitMotor::Rect area, Color& color, std::span<const Color> swatches = {}, bool enabled = true);
 
 // ---------------------------------------------------------------- menus
 // One menu is open at a time, drawn over everything with a shadow. Inside, the mouse or Up/Down and

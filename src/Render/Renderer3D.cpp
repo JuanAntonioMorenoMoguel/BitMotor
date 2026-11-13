@@ -2,6 +2,7 @@
 // with a depth buffer of their own. One pipeline: vertices with position, normal, uv and colour; a texture
 // (white when the material has none); ambient + sun + up to 8 point lights per model.
 #include "BitMotor/Core/Log.h"
+#include "BitMotor/Core/Screen.h"
 #include "BitMotor/Math/Functions.h"
 #include "BitMotor/Render/Light.h"
 #include "Render/GpuInternal.h"
@@ -12,6 +13,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 
@@ -212,6 +214,7 @@ void ReleaseMeshes() {
 }
 
 void UploadModels(SDL_GPUCopyPass* copy) {
+    QueueOverlay();
     for (ModelDraw& draw : ModelQueue())
         if (draw.Geometry && !draw.Geometry->VertexBuffer) Upload(copy, *draw.Geometry);
 }
@@ -247,6 +250,23 @@ void DrawModels(SDL_GPUCommandBuffer* commands, SDL_GPUTexture* scene, unsigned 
     SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(commands, &color, 1, &depth);
     if (!pass) return;
     SDL_BindGPUGraphicsPipeline(pass, Pipeline);
+    // The camera's viewport, from logical pixels to the scene's.
+    if (camera.Viewport.Width > 0 && camera.Viewport.Height > 0) {
+        const Vec2 size = Screen::Size();
+        const float sx = size.X > 0 ? float(width) / size.X : 1, sy = size.Y > 0 ? float(height) / size.Y : 1;
+        const Rect v = camera.Viewport;
+        const float x0 = std::clamp(v.X * sx, 0.0f, float(width)), y0 = std::clamp(v.Y * sy, 0.0f, float(height));
+        const float x1 = std::clamp((v.X + v.Width) * sx, 0.0f, float(width)),
+                    y1 = std::clamp((v.Y + v.Height) * sy, 0.0f, float(height));
+        if (x1 <= x0 || y1 <= y0) {
+            SDL_EndGPURenderPass(pass);
+            return;
+        }
+        const SDL_GPUViewport viewport{v.X * sx, v.Y * sy, v.Width * sx, v.Height * sy, 0, 1};
+        SDL_SetGPUViewport(pass, &viewport);
+        const SDL_Rect scissor{int(x0), int(y0), int(std::ceil(x1)) - int(x0), int(std::ceil(y1)) - int(y0)};
+        SDL_SetGPUScissor(pass, &scissor);
+    }
 
     LightUniforms light{};
     const Vec3 sun = Lighting3D::SunDirection();

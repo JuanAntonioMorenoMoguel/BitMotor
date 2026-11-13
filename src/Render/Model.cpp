@@ -20,6 +20,8 @@ namespace {
 
 std::vector<ModelDraw> Queue;
 std::vector<PointLight3D> Lights;
+std::vector<Line3D> Lines;
+std::vector<Point3D> Points;
 Camera3D Camera;
 
 Vec3 SunDirectionValue = Normalize(Vec3(-0.4f, -1.0f, -0.3f));
@@ -130,6 +132,87 @@ std::vector<PointLight3D>& PointLightQueue() { return Lights; }
 void ResetModels() {
     Queue.clear();
     Lights.clear();
+    Lines.clear();
+    Points.clear();
+}
+
+std::shared_ptr<MeshData> OverlayMesh(const Camera3D& camera) {
+    if (Lines.empty() && Points.empty()) return nullptr;
+    const Rect area = camera.Area();
+    if (area.Height <= 0) return nullptr;
+    const Vec3 eye = camera.Position;
+    Vec3 forward = camera.Target - camera.Position;
+    forward = LengthSquared(forward) > 0 ? Normalize(forward) : Vec3{0, 0, -1};
+    Vec3 right = Cross(forward, camera.Up);
+    right = LengthSquared(right) > 0 ? Normalize(right) : Vec3{1, 0, 0};
+    const Vec3 up = Cross(right, forward);
+    const float tanHalf = std::tan(camera.Fov * Pi / 360.0f);
+    auto depth = [&](Vec3 p) { return Dot(p - eye, forward); };
+    // World units per logical pixel at a point.
+    auto pixel = [&](Vec3 p) {
+        return camera.Orthographic ? camera.Height / area.Height
+                                   : 2 * std::max(depth(p), camera.Near) * tanHalf / area.Height;
+    };
+    // Towards the camera along its ray, which keeps it in the same place on the screen: a hair in front of
+    // what it lies on, or just behind the near plane when it goes on top.
+    auto pull = [&](Vec3 p, bool onTop) {
+        const float d = depth(p);
+        if (d <= camera.Near) return p;
+        const float target = onTop ? camera.Near * 1.5f : d * 0.998f;
+        if (camera.Orthographic) return p - forward * (d - target);
+        return eye + (p - eye) * (target / d);
+    };
+    auto facing = [&](Vec3 p) { return camera.Orthographic ? forward * -1.0f : eye - p; };
+
+    auto mesh = std::make_shared<MeshData>();
+    auto quad = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Color color) {
+        const auto base = std::uint32_t(mesh->Vertices.size());
+        const Vec3 n = Cross(b - a, c - a);
+        const bool flip = Dot(n, facing(a)) < 0;
+        const Vec3 normal = facing(a);
+        for (const Vec3 p : {a, b, c, d})
+            mesh->Vertices.push_back({p, LengthSquared(normal) > 0 ? Normalize(normal) : Vec3{0, 1, 0}, {}, color});
+        if (flip)
+            mesh->Indices.insert(mesh->Indices.end(), {base, base + 2, base + 1, base, base + 3, base + 2});
+        else
+            mesh->Indices.insert(mesh->Indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+    };
+    for (const Line3D& line : Lines) {
+        if (depth(line.From) <= camera.Near && depth(line.To) <= camera.Near) continue;
+        const Vec3 a = pull(line.From, line.OnTop), b = pull(line.To, line.OnTop);
+        const Vec3 dir = b - a;
+        auto side = [&](Vec3 p) {
+            const Vec3 s = Cross(dir, facing(p));
+            return LengthSquared(s) > 0 ? Normalize(s) * (pixel(p) * line.Width * 0.5f) : Vec3{};
+        };
+        const Vec3 sa = side(a), sb = side(b);
+        if (sa == Vec3{} && sb == Vec3{}) continue;
+        quad(a - sa, a + sa, b + sb, b - sb, line.Color);
+    }
+    for (const Point3D& point : Points) {
+        if (depth(point.Position) <= camera.Near) continue;
+        const Vec3 p = pull(point.Position, point.OnTop);
+        const float h = pixel(p) * point.Size * 0.5f;
+        const Vec3 r = right * h, u = up * h;
+        quad(p - r - u, p + r - u, p + r + u, p - r + u, point.Color);
+    }
+    if (mesh->Indices.empty()) return nullptr;
+    mesh->Min = mesh->Max = mesh->Vertices[0].Position;
+    for (const Vertex3D& v : mesh->Vertices) {
+        mesh->Min = {std::min(mesh->Min.X, v.Position.X), std::min(mesh->Min.Y, v.Position.Y),
+                     std::min(mesh->Min.Z, v.Position.Z)};
+        mesh->Max = {std::max(mesh->Max.X, v.Position.X), std::max(mesh->Max.Y, v.Position.Y),
+                     std::max(mesh->Max.Z, v.Position.Z)};
+    }
+    return mesh;
+}
+
+void QueueOverlay() {
+    std::shared_ptr<MeshData> mesh = OverlayMesh(Camera);
+    if (!mesh) return;
+    Material look;
+    look.Unlit = true;
+    Queue.push_back({std::move(mesh), look, Mat4{}, Colors::White});
 }
 
 } // namespace Detail
@@ -325,19 +408,26 @@ std::optional<Mat4> Model::Socket(std::string_view name, std::string_view animat
 
 // ---------------------------------------------------------------- Camera3D
 
+Rect Camera3D::Area() const {
+    if (Viewport.Width > 0 && Viewport.Height > 0) return Viewport;
+    const Vec2 size = Screen::Size();
+    return {0, 0, size.X, size.Y};
+}
+
 Mat4 Camera3D::View() const { return Mat4::LookAt(Position, Target, Up); }
 
 Mat4 Camera3D::Projection(float aspect) const {
     if (Orthographic) {
         const float h = Height * 0.5f, w = h * aspect;
-        return Mat4::Ortho(-w, w, -h, h, Near, Far);
+        // The view looks down -Z: depth 0 at -Near and 1 at -Far.
+        return Mat4::Ortho(-w, w, -h, h, -Near, -Far);
     }
     return Mat4::Perspective(Fov * Pi / 180.0f, aspect, Near, Far);
 }
 
 Mat4 Camera3D::ViewProjection() const {
-    const Vec2 size = Screen::Size();
-    const float aspect = size.Y > 0 ? size.X / size.Y : 1.0f;
+    const Rect area = Area();
+    const float aspect = area.Height > 0 ? area.Width / area.Height : 1.0f;
     return Projection(aspect) * View();
 }
 
@@ -345,18 +435,28 @@ std::optional<Vec2> Camera3D::ToScreen(Vec3 world) const {
     const Vec4 clip = ViewProjection() * Vec4(world, 1);
     if (clip.W <= 1e-6f) return std::nullopt;
     const Vec2 ndc{clip.X / clip.W, clip.Y / clip.W};
-    const Vec2 size = Screen::Size();
-    return Vec2{(ndc.X + 1) * 0.5f * size.X, (1 - ndc.Y) * 0.5f * size.Y};
+    const Rect area = Area();
+    return Vec2{area.X + (ndc.X + 1) * 0.5f * area.Width, area.Y + (1 - ndc.Y) * 0.5f * area.Height};
 }
 
-Vec3 Camera3D::Ray(Vec2 screen) const {
-    const Vec2 size = Screen::Size();
-    if (size.X <= 0 || size.Y <= 0) return Normalize(Target - Position);
-    const Vec2 ndc{screen.X / size.X * 2 - 1, 1 - screen.Y / size.Y * 2};
-    const Mat4 inverse = ViewProjection().Inverse();
-    const Vec3 nearPoint = inverse.TransformPoint(Vec3(ndc, 0)), farPoint = inverse.TransformPoint(Vec3(ndc, 1));
-    return Normalize(farPoint - nearPoint);
+namespace {
+// The near and far points of the camera under a point of the logical screen.
+std::pair<Vec3, Vec3> Under(const Camera3D& camera, Vec2 screen) {
+    const Rect area = camera.Area();
+    if (area.Width <= 0 || area.Height <= 0) return {camera.Position, camera.Target};
+    const Vec2 ndc{(screen.X - area.X) / area.Width * 2 - 1, 1 - (screen.Y - area.Y) / area.Height * 2};
+    const Mat4 inverse = camera.ViewProjection().Inverse();
+    return {inverse.TransformPoint(Vec3(ndc, 0)), inverse.TransformPoint(Vec3(ndc, 1))};
 }
+} // namespace
+
+Vec3 Camera3D::Ray(Vec2 screen) const {
+    const auto [nearPoint, farPoint] = Under(*this, screen);
+    const Vec3 d = farPoint - nearPoint;
+    return LengthSquared(d) > 0 ? Normalize(d) : Normalize(Target - Position);
+}
+
+Vec3 Camera3D::RayOrigin(Vec2 screen) const { return Orthographic ? Under(*this, screen).first : Position; }
 
 // ---------------------------------------------------------------- Screen and Lighting3D
 
@@ -380,6 +480,8 @@ void Draw(const Model3D& model) {
 }
 
 void Draw(const PointLight3D& light) { Detail::Lights.push_back(light); }
+void Draw(const Line3D& line) { Detail::Lines.push_back(line); }
+void Draw(const Point3D& point) { Detail::Points.push_back(point); }
 
 } // namespace Screen
 
