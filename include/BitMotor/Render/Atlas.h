@@ -74,6 +74,7 @@ public:
     Atlas() = default;
 
     // Reads the JSON and its image (same name, .png). An empty atlas (and a log error) if it fails.
+    // A .bitsprite (docs/BitSprite.md) is baked and packed on the spot: its sprites are named as PackSprites says.
     static Atlas Load(const std::filesystem::path& json);
 
     // A sprite by name. An unknown name warns once and gives an empty Region (draws nothing).

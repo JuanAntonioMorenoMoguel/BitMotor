@@ -3,6 +3,7 @@
 #include "BitMotor/Core/Files.h"
 #include "BitMotor/Core/Log.h"
 #include "BitMotor/Math/Functions.h"
+#include "BitMotor/Render/SpriteFile.h"
 
 #include <nlohmann/json.hpp>
 
@@ -150,6 +151,18 @@ Atlas Atlas::Load(const std::filesystem::path& json) {
     if (!text) {
         Log::Error("Cannot read the atlas {}", full.string());
         return {};
+    }
+    // A .bitsprite: baked and packed now, so a sprite saved in BitSprite shows up without packing an atlas.
+    if (full.extension() == ".bitsprite") {
+        std::optional<SpriteFile> sprite = SpriteFile::Parse(*text, full.filename().string());
+        if (!sprite) return {};
+        PackedAtlas packed = PackSprites({{full.stem().string(), *sprite}});
+        const Filter spriteFilter = sprite->Filter == "linear" ? Filter::Linear : Filter::Nearest;
+        Texture image = Texture::FromPixels(packed.Image.Width, packed.Image.Height, packed.Image.Color, spriteFilter);
+        if (!image) return {};
+        image.SetNormals(
+            Texture::FromPixels(packed.Image.Width, packed.Image.Height, packed.Image.Normals, spriteFilter));
+        return Parse(packed.Json, image, full.filename().string());
     }
     // nyiengisprite writes "filter": "nearest" for pixel art; hand-made atlases of smooth art say "linear".
     Json peek = Json::parse(*text, nullptr, false);
