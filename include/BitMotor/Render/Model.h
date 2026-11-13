@@ -2,6 +2,7 @@
 #include "BitMotor/Colors/Color.h"
 #include "BitMotor/Colors/Colors.h"
 #include "BitMotor/Math/Matrix.h"
+#include "BitMotor/Math/Shapes.h"
 #include "BitMotor/Math/Vector.h"
 #include "BitMotor/Render/Texture.h"
 
@@ -154,15 +155,24 @@ struct Camera3D {
     // Orthographic: no perspective, `Height` units fit from top to bottom.
     bool Orthographic = false;
     float Height = 10;
+    // Where on the logical screen the 3D is drawn (an editor's 3D panel). Empty: the whole screen. One camera
+    // per frame, so one 3D view.
+    Rect Viewport = {};
 
+    // The viewport, or the whole logical screen when it is empty.
+    Rect Area() const;
     Mat4 View() const;
     Mat4 Projection(float aspect) const;
-    // Projection * View for the logical screen's shape.
+    // Projection * View for the shape of Area().
     Mat4 ViewProjection() const;
-    // Where a point of the world is on the logical screen (pixels). nullopt if it is behind the camera.
+    // Where a point of the world is on the logical screen (pixels, inside Area()). nullopt if it is behind
+    // the camera.
     std::optional<Vec2> ToScreen(Vec3 world) const;
     // The direction from the camera through a point of the logical screen (for picking).
     Vec3 Ray(Vec2 screen) const;
+    // Where the ray through `screen` starts: the camera for a perspective one; on the near plane, under that
+    // point, for an orthographic one.
+    Vec3 RayOrigin(Vec2 screen) const;
 };
 
 struct PointLight3D {
@@ -173,12 +183,33 @@ struct PointLight3D {
     float Intensity = 1;
 };
 
+// A line in the 3D world, `Width` logical pixels wide whatever its distance: grids, axes, wireframes, gizmos,
+// debugging. Hidden behind models unless `OnTop`.
+struct Line3D {
+    Vec3 From = {0, 0, 0};
+    Vec3 To = {0, 0, 0};
+    BitMotor::Color Color = Colors::White;
+    float Width = 1;
+    bool OnTop = false;
+};
+
+// A square dot in the 3D world, `Size` logical pixels across (selected vertices, handles).
+struct Point3D {
+    Vec3 Position = {0, 0, 0};
+    BitMotor::Color Color = Colors::White;
+    float Size = 5;
+    bool OnTop = false;
+};
+
 namespace Screen {
 void SetCamera3D(const Camera3D& camera);
 const Camera3D& CurrentCamera3D();
 void Draw(const Model3D& model);
 // Lights the models of this frame (up to 8 per model: the closest ones).
 void Draw(const PointLight3D& light);
+// Drawn with the models, unlit, with the camera of the end of the frame.
+void Draw(const Line3D& line);
+void Draw(const Point3D& point);
 } // namespace Screen
 
 // The light of the 3D world: a sun (a direction) and an ambient light. Lighting::SetStepped bands it too.

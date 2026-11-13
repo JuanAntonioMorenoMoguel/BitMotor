@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <format>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -1496,6 +1497,278 @@ bool DropTarget(BitMotor::Rect area, std::string& payload) {
 std::string_view Dragged() {
     UpdateDrag();
     return Drag.Active && !Drag.Dropped ? std::string_view(Drag.Payload) : std::string_view();
+}
+
+// ---------------------------------------------------------------- tree view
+
+bool TreeView(BitMotor::Rect area, int& selected, std::span<const TreeItem> items, std::vector<bool>& open, int& scroll,
+              TreeMove& move, bool enabled) {
+    Fading fading(enabled);
+    const int before = selected;
+    move = {};
+    const int count = int(items.size());
+    if (open.size() < items.size()) open.resize(items.size(), true);
+    const std::uint64_t id = Hash("tree", area);
+    const Detail::WidgetInput in = Detail::Interact(area, enabled, true);
+    const float row = RowHeight();
+    const float indent = std::round(CapHeight() * 1.2f);
+    const BitMotor::Rect inside = area.Expand(-1);
+
+    // The rows shown: an item is hidden when one of the items it hangs from is closed.
+    std::vector<int> shown;
+    std::vector<bool> parent(items.size(), false);
+    for (int i = 0; i + 1 < count; ++i)
+        parent[std::size_t(i)] = items[std::size_t(i + 1)].Depth > items[std::size_t(i)].Depth;
+    int hiddenUnder = -1; // the depth of a closed item whose children are being skipped
+    for (int i = 0; i < count; ++i) {
+        const int depth = items[std::size_t(i)].Depth;
+        if (hiddenUnder >= 0 && depth > hiddenUnder) continue;
+        hiddenUnder = -1;
+        shown.push_back(i);
+        if (parent[std::size_t(i)] && !open[std::size_t(i)]) hiddenUnder = depth;
+    }
+    const int rows = int(shown.size());
+    const int visible = Max(1, int(inside.Height / row));
+    const int most = Max(0, rows - visible);
+    const Vec2 mouse = Detail::UiMouse();
+    auto rowOf = [&](int item) {
+        for (int k = 0; k < rows; ++k)
+            if (shown[std::size_t(k)] == item) return k;
+        return -1;
+    };
+
+    if (enabled) {
+        if (UI::Hovered(area)) scroll -= int(std::round(Detail::FrameWheel() * 3));
+        if (in.Pressed && in.Hovered) {
+            const int k = scroll + int((mouse.Y - inside.Y) / row);
+            if (k >= 0 && k < rows) {
+                const int item = shown[std::size_t(k)];
+                const float arrowX = inside.X + Current.Padding + float(items[std::size_t(item)].Depth) * indent;
+                if (parent[std::size_t(item)] && mouse.X >= arrowX - 2 && mouse.X < arrowX + indent)
+                    open[std::size_t(item)] = !open[std::size_t(item)];
+                else
+                    selected = item;
+            }
+            ActiveList = id;
+        }
+        if (in.ShowFocus) ActiveList = id;
+        // Left/Right walk the rows shown, as in a ListView; Confirm opens or closes the chosen one.
+        if (in.Adjust != 0 && rows > 0) {
+            const int k = Clamp(rowOf(selected) < 0 ? 0 : rowOf(selected) + in.Adjust, 0, rows - 1);
+            selected = shown[std::size_t(k)];
+        }
+        if (in.Pressed && !in.Hovered && selected >= 0 && selected < count && parent[std::size_t(selected)])
+            open[std::size_t(selected)] = !open[std::size_t(selected)];
+        const int k = rowOf(selected);
+        if (k >= 0 && selected != before) {
+            if (k < scroll) scroll = k;
+            if (k >= scroll + visible) scroll = k - visible + 1;
+        }
+    }
+    scroll = Clamp(scroll, 0, most);
+
+    FillRounded(area, 0, 0, Current.BoxBorder, Current.BoxBorder);
+    FillRounded(inside, 0, 0, Current.InnerBackground, Current.InnerBackground);
+    Screen::PushClip(inside);
+    for (int r = 0; r < visible && scroll + r < rows; ++r) {
+        const int item = shown[std::size_t(scroll + r)];
+        const TreeItem& t = items[std::size_t(item)];
+        const BitMotor::Rect cell(inside.X, inside.Y + float(r) * row, inside.Width, row);
+        Color text = Current.TextColor;
+        if (item == selected) {
+            const bool focused = enabled && ActiveList == id;
+            const Color back = focused ? Current.Accent : Current.SelectionUnfocused;
+            FillRounded(cell, 0, 0, back, back);
+            text = focused ? Current.SelectedText : Current.TextColor;
+        }
+        const float x = cell.X + Current.Padding + float(t.Depth) * indent;
+        if (parent[std::size_t(item)]) {
+            // ▸ closed, ▾ open.
+            const Vec2 c{x + indent * 0.4f, cell.Center().Y};
+            const float h = std::round(CapHeight() * 0.35f);
+            const Color mark = Faded(item == selected ? text : Current.Mark);
+            if (open[std::size_t(item)])
+                UI::Triangle({c.X - h, c.Y - h * 0.5f}, {c.X + h, c.Y - h * 0.5f}, {c.X, c.Y + h * 0.7f}, mark);
+            else
+                UI::Triangle({c.X - h * 0.5f, c.Y - h}, {c.X - h * 0.5f, c.Y + h}, {c.X + h * 0.7f, c.Y}, mark);
+        }
+        const BitMotor::Rect label(x + indent, cell.Y, Max(0.0f, cell.Right() - x - indent), row);
+        DrawText(label, Fit(t.Label, label.Width - Current.Padding), text, Align::Left, 0);
+        if (enabled) {
+            DragSource(cell, "tree:" + std::to_string(id) + ":" + std::to_string(item), t.Label);
+            if (std::string what; DropTarget(cell, what)) {
+                const std::string prefix = "tree:" + std::to_string(id) + ":";
+                if (what.rfind(prefix, 0) == 0) move = {std::stoi(what.substr(prefix.size())), item};
+            }
+        }
+    }
+    // Under the rows: back to the top level.
+    const float used = float(Min(visible, rows - scroll)) * row;
+    if (enabled && used < inside.Height) {
+        const BitMotor::Rect rest(inside.X, inside.Y + used, inside.Width, inside.Height - used);
+        if (std::string what; DropTarget(rest, what)) {
+            const std::string prefix = "tree:" + std::to_string(id) + ":";
+            if (what.rfind(prefix, 0) == 0) move = {std::stoi(what.substr(prefix.size())), -1};
+        }
+    }
+    Screen::PopClip();
+    if (move.From == move.To) move = {};
+    if (in.ShowFocus) FocusRing(area, 0);
+    Detail::RememberWidget(area, in.Hovered, in.Focused);
+    if (selected != before) Detail::FireClick();
+    return selected != before || move.From >= 0;
+}
+
+// ---------------------------------------------------------------- colour picker
+
+namespace {
+
+struct Hsv {
+    float H = 0, S = 0, V = 0;
+};
+
+Hsv ToHsv(Color c) {
+    const float hi = Max(c.R, Max(c.G, c.B)), lo = Min(c.R, Min(c.G, c.B)), d = hi - lo;
+    Hsv out{0, hi > 0 ? d / hi : 0, hi};
+    if (d > 0) {
+        if (hi == c.R)
+            out.H = std::fmod((c.G - c.B) / d + 6, 6.0f) / 6;
+        else if (hi == c.G)
+            out.H = ((c.B - c.R) / d + 2) / 6;
+        else
+            out.H = ((c.R - c.G) / d + 4) / 6;
+    }
+    return out;
+}
+
+Color FromHsv(Hsv hsv, float alpha) {
+    const float h = std::fmod(hsv.H, 1.0f) * 6, c = hsv.V * hsv.S, x = c * (1 - std::abs(std::fmod(h, 2.0f) - 1)),
+                m = hsv.V - c;
+    float r = 0, g = 0, b = 0;
+    switch (int(h)) {
+    case 0:
+        r = c, g = x;
+        break;
+    case 1:
+        r = x, g = c;
+        break;
+    case 2:
+        g = c, b = x;
+        break;
+    case 3:
+        g = x, b = c;
+        break;
+    case 4:
+        r = x, b = c;
+        break;
+    default:
+        r = c, b = x;
+        break;
+    }
+    return {r + m, g + m, b + m, alpha};
+}
+
+// The hue of each picker, kept while the colour is grey (where it cannot be read back from the colour).
+std::map<std::uint64_t, float> PickerHue;
+
+} // namespace
+
+bool ColorPicker(BitMotor::Rect area, Color& color, std::span<const Color> swatches, bool enabled) {
+    Fading fading(enabled);
+    ReleaseDrag();
+    const Color before = color;
+    const std::uint64_t id = Hash("color", area);
+    const Detail::WidgetInput in = Detail::Interact(area, enabled, false);
+    const float gap = 4, bar = std::round(CapHeight() + 4), row = RowHeight();
+    const float swatchSize = swatches.empty() ? 0 : bar + 2;
+    const BitMotor::Rect info(area.X, area.Bottom() - row, area.Width, row);
+    const BitMotor::Rect swatchRow(area.X, info.Y - gap - swatchSize, area.Width, swatchSize);
+    const float barsBottom = swatches.empty() ? info.Y - gap : swatchRow.Y - gap;
+    const BitMotor::Rect alphaBar(area.X, barsBottom - bar, area.Width, bar);
+    const BitMotor::Rect hueBar(area.X, alphaBar.Y - gap - bar, area.Width, bar);
+    const BitMotor::Rect square(area.X, area.Y, area.Width, Max(0.0f, hueBar.Y - gap - area.Y));
+
+    Hsv hsv = ToHsv(color);
+    if (auto kept = PickerHue.find(id); kept != PickerHue.end() && (hsv.S == 0 || hsv.V == 0)) hsv.H = kept->second;
+    const Vec2 mouse = Detail::UiMouse();
+    // DragId tells which part is held: the picker's id plus 1, 2 or 3.
+    if (enabled && in.Pressed && in.Hovered) {
+        if (square.Contains(mouse)) DragId = id + 1;
+        if (hueBar.Contains(mouse)) DragId = id + 2;
+        if (alphaBar.Contains(mouse)) DragId = id + 3;
+        if (swatchRow.Contains(mouse)) {
+            const int k = int((mouse.X - swatchRow.X) / (swatchSize + 2));
+            if (k >= 0 && k < int(swatches.size())) {
+                color = swatches[std::size_t(k)];
+                hsv = ToHsv(color);
+            }
+        }
+    }
+    auto along = [&](BitMotor::Rect r) { return r.Width > 0 ? Clamp((mouse.X - r.X) / r.Width, 0.0f, 1.0f) : 0.0f; };
+    if (enabled && Detail::UiMouseDown()) {
+        if (DragId == id + 1 && square.Height > 0) {
+            hsv.S = along(square);
+            hsv.V = 1 - Clamp((mouse.Y - square.Y) / square.Height, 0.0f, 1.0f);
+            color = FromHsv(hsv, color.A);
+        } else if (DragId == id + 2) {
+            hsv.H = Min(along(hueBar), 0.9999f);
+            color = FromHsv(hsv, color.A);
+        } else if (DragId == id + 3) {
+            color.A = along(alphaBar);
+        }
+    }
+    PickerHue[id] = hsv.H;
+
+    // The square: columns from white to the hue, each fading to black.
+    const int columns = Max(1, int(square.Width / 2));
+    for (int k = 0; k < columns; ++k) {
+        const float x0 = std::round(square.X + square.Width * float(k) / float(columns)),
+                    x1 = std::round(square.X + square.Width * float(k + 1) / float(columns));
+        const Color top = FromHsv({hsv.H, (float(k) + 0.5f) / float(columns), 1}, 1);
+        FillRounded({x0, square.Y, x1 - x0, square.Height}, 0, 0, Faded(top), Faded(Colors::Black));
+    }
+    const Vec2 dot{square.X + hsv.S * square.Width, square.Y + (1 - hsv.V) * square.Height};
+    UI::Circle(dot, 5, Faded(Colors::Black));
+    UI::Circle(dot, 4, Faded(Colors::White));
+    UI::Circle(dot, 3, Faded(FromHsv(hsv, 1)));
+    // The hue bar and the alpha bar (over a checkerboard).
+    const int strips = Max(1, int(hueBar.Width / 2));
+    for (int k = 0; k < strips; ++k) {
+        const float x0 = std::round(hueBar.X + hueBar.Width * float(k) / float(strips)),
+                    x1 = std::round(hueBar.X + hueBar.Width * float(k + 1) / float(strips));
+        UI::Rect({x0, hueBar.Y, x1 - x0, hueBar.Height}, Faded(FromHsv({(float(k) + 0.5f) / float(strips), 1, 1}, 1)));
+        const float cell = alphaBar.Height * 0.5f;
+        for (int y = 0; y < 2; ++y) {
+            const bool dark = (int((x0 - alphaBar.X) / cell) + y) % 2 == 1;
+            UI::Rect({x0, alphaBar.Y + float(y) * cell, x1 - x0, cell},
+                     Faded(dark ? Color::Hex(0x999999) : Colors::White));
+        }
+        const Color a = color.WithAlpha((float(k) + 0.5f) / float(strips));
+        UI::Rect({x0, alphaBar.Y, x1 - x0, alphaBar.Height}, Faded(a));
+    }
+    auto marker = [&](BitMotor::Rect r, float t) {
+        const float x = std::round(r.X + t * r.Width);
+        UI::RectOutline({x - 2, r.Y - 1, 4, r.Height + 2}, Faded(Colors::Black));
+        UI::RectOutline({x - 1, r.Y, 2, r.Height}, Faded(Colors::White));
+    };
+    marker(hueBar, hsv.H);
+    marker(alphaBar, color.A);
+    for (std::size_t k = 0; k < swatches.size(); ++k) {
+        const BitMotor::Rect s(swatchRow.X + float(k) * (swatchSize + 2), swatchRow.Y, swatchSize, swatchSize);
+        if (s.Right() > swatchRow.Right()) break;
+        FillRounded(s, 2, 2, Faded(Current.BoxBorder), Faded(Current.BoxBorder));
+        FillRounded(s.Expand(-1), 2, 2, Faded(swatches[k]), Faded(swatches[k]));
+    }
+    // The colour and its code.
+    const BitMotor::Rect preview(info.X, info.Y + 2, row * 1.6f, row - 4);
+    FillRounded(preview, 3, 3, Faded(Current.BoxBorder), Faded(Current.BoxBorder));
+    FillRounded(preview.Expand(-1), 3, 3, Faded(color), Faded(color));
+    DrawText({preview.Right() + Current.Padding, info.Y, info.Width - preview.Width - Current.Padding, row},
+             color.ToHex(), Current.TextColor, Align::Left, 0);
+    Detail::RememberWidget(area, in.Hovered, in.Focused);
+    const bool changed = color != before;
+    if (changed && in.Pressed) Detail::FireClick();
+    return changed;
 }
 
 // ---------------------------------------------------------------- menus

@@ -670,3 +670,86 @@ TEST(JFxDragAndDrop) {
     CHECK(got.empty());
     CHECK_EQ(seen, std::string(""));
 }
+
+TEST(JFxTreeViewsOpenCloseAndMove) {
+    Fresh();
+    const std::vector<Fx::TreeItem> items = {{"root", 0}, {"torso", 1}, {"head", 2}, {"arm", 2}, {"lamp", 0}};
+    std::vector<bool> open;
+    int selected = -1, scroll = 0;
+    Fx::TreeMove move;
+    const Rect area{10, 10, 200, 200};
+    auto screen = [&] { Fx::TreeView(area, selected, items, open, scroll, move); };
+    Frame(screen);
+    CHECK_EQ(open.size(), items.size());
+    // Rows are 21 pixels with the pixel font. Click the label of the second row (torso): it is chosen.
+    Click({150, 11 + 21 + 10});
+    Frame(screen);
+    Frame(screen);
+    CHECK_EQ(selected, 1);
+    // Click root's arrow (left side of the first row): torso, head and arm hide, lamp is the second row.
+    Click({11 + 8, 11 + 10});
+    Frame(screen);
+    Frame(screen);
+    CHECK(!open[0]);
+    CHECK_EQ(selected, 1);
+    Click({150, 11 + 21 + 10});
+    Frame(screen);
+    Frame(screen);
+    CHECK_EQ(selected, 4);
+    // Open it again and drag lamp (now the fifth row) onto torso (the second).
+    Click({11 + 8, 11 + 10});
+    Frame(screen);
+    Frame(screen);
+    CHECK(open[0]);
+    Hold({150, 11 + 4 * 21 + 10});
+    Frame(screen);
+    Detail::InputMouseMove({150, 11 + 21 + 10});
+    Frame(screen);
+    Let({150, 11 + 21 + 10});
+    Frame(screen);
+    CHECK_EQ(move.From, 4);
+    CHECK_EQ(move.To, 1);
+    Frame(screen);
+    CHECK_EQ(move.From, -1);
+}
+
+TEST(JFxColorPickersChoose) {
+    Fresh();
+    Color color = Colors::Red;
+    const std::vector<Color> swatches = {Colors::Blue, Colors::Lime};
+    const Rect area{0, 0, 200, 220};
+    bool changed = false;
+    auto screen = [&] { changed = Fx::ColorPicker(area, color, swatches); };
+    Frame(screen);
+    CHECK(!changed);
+    // The top-left of the square is white, the bottom is black.
+    Click({0, 0});
+    Frame(screen);
+    CHECK(changed);
+    Frame(screen);
+    CHECK(Near(color, Colors::White));
+    Click({100, 120});
+    Frame(screen);
+    Hold({100, 1000});
+    Frame(screen);
+    Let({100, 1000});
+    Frame(screen);
+    CHECK(Near(color, Colors::Black));
+    // A swatch.
+    Fresh();
+    color = Colors::Red;
+    Frame(screen);
+    float swatchY = -1;
+    for (float y = 219; y > 100 && swatchY < 0; --y) {
+        Color probe = Colors::Red;
+        Click({5, y});
+        Frame([&] { Fx::ColorPicker(area, probe, swatches); });
+        if (Near(probe, Colors::Blue)) swatchY = y;
+    }
+    CHECK(swatchY > 0);
+    // Keeps its alpha when the colour changes.
+    color = Colors::Red.WithAlpha(0.5f);
+    Click({0, 0});
+    Frame(screen);
+    CHECK_NEAR(color.A, 0.5f, 1e-5f);
+}
