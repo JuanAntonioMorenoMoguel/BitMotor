@@ -46,6 +46,8 @@ struct Material {
     bool Unlit = false;
 };
 
+struct ModelFile;
+
 namespace Detail {
 struct MeshData;
 struct ModelData;
@@ -106,6 +108,10 @@ public:
     // From the text of a .bitmodel; textures are looked for in `folder`. `name` is for the log.
     static Model Parse(std::string_view json, const std::filesystem::path& folder = {},
                        std::string_view name = "model");
+    // A ModelFile (ModelFile.h) ready to draw; textures are looked for in `folder`. Names that point nowhere
+    // are warned about and left out.
+    static Model FromFile(const ModelFile& file, const std::filesystem::path& folder = {},
+                          std::string_view name = "model");
     // One mesh as a model with a single node.
     static Model FromMesh(const Mesh& mesh, const Material& material = {});
 

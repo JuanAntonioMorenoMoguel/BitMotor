@@ -1,8 +1,8 @@
 # Formato BitModel (`.bitmodel`), versión 1
 
 Un modelo 3D low-poly para el 3D básico de BitMotor. Lo exporta BitModel y lo carga `Model::Load("robot.bitmodel")`
-(`include/BitMotor/Render/Model.h`). El código que lo lee está en `src/Render/Model.cpp`. Este documento y ese
-fichero tienen que decir lo mismo.
+(`include/BitMotor/Render/Model.h`). El código que lo lee y lo escribe está en `src/Render/ModelFile.cpp`. Este
+documento y ese fichero tienen que decir lo mismo.
 
 Lo que el 3D de BitMotor dibuja en esta versión: mallas de triángulos con posición, normal, UV y color por vértice;
 un material por malla (color, textura, emisión, sin luz); nodos en jerarquía; animación rígida por nodo; sockets.
@@ -111,3 +111,37 @@ Reglas:
 - Con `Config::LinearColor`, los colores y las texturas se convierten de sRGB a lineal antes de todo esto.
 - Los modelos con transparencia (alfa del color del material o del `Tint` menor que 1) se dibujan después de los
   opacos, del más lejano al más cercano.
+
+## Hacer y cambiar modelos por código
+
+BitMotor tiene todo lo necesario para crear modelos sin ventana; BitModel (la aplicación) solo pone la interfaz
+encima, y un juego o una herramienta pueden usar lo mismo:
+
+- `ModelFile` (`include/BitMotor/Render/ModelFile.h`) es el `.bitmodel` tal cual, con los nombres y las rutas de
+  textura: `ModelFile::Load`, `Parse`, `ToJson`, `Save`. `Model::FromFile(file)` lo convierte en un `Model` para
+  dibujar (`Model::Parse` es lo mismo en un paso). Una referencia que no existe se conserva en el fichero; al
+  dibujar se avisa y se ignora.
+- `Save` escribe de forma determinista: las claves en el orden de este documento, los nombres ordenados, sin los
+  valores por defecto, números con como mucho 6 decimales y un vértice (o un triángulo) por línea. Leer y volver
+  a guardar da los mismos bytes.
+- `Modeling::` (`include/BitMotor/Render/Modeling.h`): primitivas, ediciones de malla por caras (extruir,
+  insetar, subdividir, espejo, pintar, UV de paleta...), cambios del modelo que mantienen las referencias
+  (renombrar, quitar nodos, cambiar de padre), claves de animación, `Pose` sin crear el modelo, `Check` (lo que
+  estaría mal) e importar y exportar OBJ con su MTL.
+
+```cpp
+ModelFile file;
+file.Meshes["tower"] = Modeling::Cylinder(0.5f, 2, 8);
+ModelFile::Mesh& tower = file.Meshes["tower"];
+auto top = Modeling::Inset(tower, Modeling::FacesFacing(tower, {0, 1, 0}), 0.3f);
+Modeling::Extrude(tower, top, -0.2f);                  // un hueco arriba
+Modeling::Paint(tower, top, Colors::Slate);
+ModelFile::Node node;
+node.Name = node.Mesh = "tower";
+file.Nodes.push_back(node);
+Modeling::SetKey(file, "idle", "tower", ModelFile::Property::Scale, 0.5f, std::vector<float>{1, 1.1f, 1});
+file.Save("tower.bitmodel");
+```
+
+Las caras son triángulos, numerados por su sitio en `Indices`. Las ediciones que necesitan que una cara tenga sus
+propios vértices (pintar, UV, voltear) los copian antes, así que las caras vecinas no cambian.

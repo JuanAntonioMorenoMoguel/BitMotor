@@ -43,6 +43,8 @@
 #include "BitMotor/Render/Camera.h"
 #include "BitMotor/Render/Light.h"
 #include "BitMotor/Render/Model.h"
+#include "BitMotor/Render/ModelFile.h"
+#include "BitMotor/Render/Modeling.h"
 #include "BitMotor/Render/Particles.h"
 #include "BitMotor/Render/RenderTexture.h"
 #include "BitMotor/Render/Sprite.h"

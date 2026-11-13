@@ -1,5 +1,9 @@
 #pragma once
 #include "BitMotor/Render/Model.h"
+#include "BitMotor/Render/ModelFile.h"
+
+#include <filesystem>
+#include <string_view>
 
 #include <map>
 #include <memory>
@@ -77,6 +81,16 @@ struct ModelDraw {
     Mat4 World;
     Color Tint;
 };
+
+// A ModelFile ready to draw (ModelFile.cpp): names resolved (what points nowhere is warned about and left
+// out), rotations normalised and the textures loaded. Not `full`: only the nodes, animations and sockets, and
+// quiet (for poses).
+std::shared_ptr<ModelData> BuildModel(const ModelFile& file, const std::filesystem::path& folder, std::string_view name,
+                                      bool full);
+// A number as .bitmodel files write it: at most 6 decimals, no trailing zeros, never "-0".
+std::string ModelNumber(float value);
+// Where every node is at `seconds` into `animation` (Model.cpp).
+std::vector<Mat4> ComputePose(const ModelData& data, std::string_view animation, float seconds);
 
 std::vector<ModelDraw>& ModelQueue();
 std::vector<PointLight3D>& PointLightQueue();
