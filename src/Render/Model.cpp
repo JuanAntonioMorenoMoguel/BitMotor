@@ -7,8 +7,6 @@
 #include "BitMotor/Math/Functions.h"
 #include "Core/FilesInternal.h"
 
-#include <nlohmann/json.hpp>
-
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -19,8 +17,6 @@ namespace BitMotor {
 namespace Detail {
 
 namespace {
-
-using Json = nlohmann::json;
 
 std::vector<ModelDraw> Queue;
 std::vector<PointLight3D> Lights;
@@ -101,6 +97,8 @@ void Sample(const ModelTrack& track, float t, ModelNode& node) {
     }
 }
 
+} // namespace
+
 std::vector<Mat4> ComputePose(const ModelData& data, std::string_view animation, float seconds) {
     std::vector<ModelNode> nodes = data.Nodes;
     if (!animation.empty()) {
@@ -126,261 +124,12 @@ std::vector<Mat4> ComputePose(const ModelData& data, std::string_view animation,
     return world;
 }
 
-// ---- .bitmodel
-
-struct Reader {
-    std::string Name;
-    bool Ok = true;
-
-    void Unknown(const Json& object, std::initializer_list<const char*> known, std::string_view where) {
-        if (!object.is_object()) return;
-        for (auto& [key, value] : object.items()) {
-            (void)value;
-            if (std::none_of(known.begin(), known.end(), [&](const char* k) { return key == k; }))
-                Log::Warn("{}: unknown key '{}' in {}", Name, key, where);
-        }
-    }
-
-    float Number(const Json& v, float fallback = 0) { return v.is_number() ? v.get<float>() : fallback; }
-
-    std::vector<float> Numbers(const Json& object, const char* key, std::string_view where) {
-        std::vector<float> out;
-        if (!object.contains(key)) return out;
-        const Json& list = object[key];
-        if (!list.is_array()) {
-            Log::Warn("{}: {}.{} must be a list of numbers", Name, where, key);
-            return out;
-        }
-        out.reserve(list.size());
-        for (const Json& v : list) out.push_back(Number(v));
-        return out;
-    }
-
-    Vec3 Vector(const Json& object, const char* key, Vec3 fallback) {
-        if (!object.contains(key)) return fallback;
-        const Json& v = object[key];
-        if (!v.is_array() || v.size() != 3) {
-            Log::Warn("{}: {} must be [X, Y, Z]", Name, key);
-            return fallback;
-        }
-        return {Number(v[0]), Number(v[1]), Number(v[2])};
-    }
-
-    Quat Rotation(const Json& object, const char* key) {
-        if (!object.contains(key)) return {};
-        const Json& v = object[key];
-        if (!v.is_array() || v.size() != 4) {
-            Log::Warn("{}: {} must be a quaternion [X, Y, Z, W]", Name, key);
-            return {};
-        }
-        return Quat{Number(v[0]), Number(v[1]), Number(v[2]), Number(v[3], 1)}.Normalized();
-    }
-
-    Color ColorOf(const Json& object, const char* key) {
-        if (!object.contains(key)) return Colors::White;
-        const Json& v = object[key];
-        if (!v.is_array() || (v.size() != 3 && v.size() != 4)) {
-            Log::Warn("{}: {} must be [R, G, B, A]", Name, key);
-            return Colors::White;
-        }
-        return {Number(v[0]), Number(v[1]), Number(v[2]), v.size() == 4 ? Number(v[3], 1) : 1.0f};
-    }
-};
-
-} // namespace
-
 std::vector<ModelDraw>& ModelQueue() { return Queue; }
 std::vector<PointLight3D>& PointLightQueue() { return Lights; }
 
 void ResetModels() {
     Queue.clear();
     Lights.clear();
-}
-
-std::shared_ptr<ModelData> ParseModel(std::string_view text, const std::filesystem::path& folder,
-                                      std::string_view name) {
-    Json json = Json::parse(text, nullptr, false);
-    Reader r{std::string(name)};
-    if (json.is_discarded() || !json.is_object()) {
-        Log::Error("{}: not valid JSON", name);
-        return nullptr;
-    }
-    if (json.value("Format", std::string()) != "bitmodel") {
-        Log::Error("{}: \"Format\" must be \"bitmodel\"", name);
-        return nullptr;
-    }
-    if (json.contains("Version") && r.Number(json["Version"], 1) > 1)
-        Log::Warn("{}: version {} is newer than this BitMotor reads (1)", name, json["Version"].dump());
-    r.Unknown(json, {"Format", "Version", "Materials", "Meshes", "Nodes", "Animations", "Sockets"}, "the model");
-    auto data = std::make_shared<ModelData>();
-
-    // Materials, by name.
-    std::map<std::string, Material, std::less<>> materials;
-    if (json.contains("Materials") && json["Materials"].is_object())
-        for (auto& [key, m] : json["Materials"].items()) {
-            r.Unknown(m, {"Color", "Texture", "Filter", "Emission", "Unlit"}, "material " + key);
-            Material material;
-            material.Tint = r.ColorOf(m, "Color");
-            material.Emission = r.Number(m.value("Emission", Json(0.0f)));
-            material.Unlit = m.value("Unlit", false);
-            const std::string texture = m.value("Texture", std::string());
-            if (!texture.empty()) {
-                const Filter filter =
-                    m.value("Filter", std::string("nearest")) == "linear" ? Filter::Linear : Filter::Nearest;
-                std::filesystem::path path = folder / Utf8Path(texture);
-                material.Image = Texture::Load(path.is_relative() ? Files::AssetPath(path) : path, filter);
-            }
-            materials[key] = material;
-        }
-
-    // Meshes, by name.
-    std::map<std::string, int, std::less<>> meshIndex;
-    if (json.contains("Meshes") && json["Meshes"].is_object())
-        for (auto& [key, m] : json["Meshes"].items()) {
-            const std::string where = "mesh " + key;
-            r.Unknown(m, {"Material", "Positions", "Normals", "Uvs", "Colors", "Indices"}, where);
-            const std::vector<float> positions = r.Numbers(m, "Positions", where),
-                                     normals = r.Numbers(m, "Normals", where), uvs = r.Numbers(m, "Uvs", where),
-                                     colors = r.Numbers(m, "Colors", where);
-            const std::size_t count = positions.size() / 3;
-            if (positions.size() % 3 != 0 || count == 0) {
-                Log::Warn("{}: {} needs Positions, three numbers per vertex", name, where);
-                continue;
-            }
-            const bool hasNormals = normals.size() == count * 3, hasUvs = uvs.size() == count * 2,
-                       hasColors = colors.size() == count * 4;
-            if (!normals.empty() && !hasNormals) Log::Warn("{}: {}: Normals do not match the vertices", name, where);
-            if (!uvs.empty() && !hasUvs) Log::Warn("{}: {}: Uvs do not match the vertices", name, where);
-            if (!colors.empty() && !hasColors) Log::Warn("{}: {}: Colors do not match the vertices", name, where);
-            std::vector<Vertex3D> vertices(count);
-            for (std::size_t i = 0; i < count; ++i) {
-                Vertex3D& v = vertices[i];
-                v.Position = {positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]};
-                if (hasNormals) v.Normal = {normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2]};
-                if (hasUvs) v.Uv = {uvs[i * 2], uvs[i * 2 + 1]};
-                if (hasColors) v.Tint = {colors[i * 4], colors[i * 4 + 1], colors[i * 4 + 2], colors[i * 4 + 3]};
-            }
-            std::vector<std::uint32_t> indices;
-            if (m.contains("Indices") && m["Indices"].is_array())
-                for (const Json& i : m["Indices"])
-                    if (i.is_number_integer() && i.get<long long>() >= 0) indices.push_back(i.get<std::uint32_t>());
-            ModelPart part;
-            part.Geometry = Mesh::Create(std::move(vertices), std::move(indices));
-            const std::string material = m.value("Material", std::string());
-            auto found = materials.find(material);
-            if (found != materials.end())
-                part.Look = found->second;
-            else if (!material.empty())
-                Log::Warn("{}: {} uses the material '{}', which does not exist", name, where, material);
-            meshIndex[key] = int(data->Meshes.size());
-            data->Meshes.push_back(std::move(part));
-        }
-
-    // Nodes, in order (parents first).
-    std::map<std::string, int, std::less<>> nodeIndex;
-    if (json.contains("Nodes") && json["Nodes"].is_array())
-        for (const Json& n : json["Nodes"]) {
-            r.Unknown(n, {"Name", "Parent", "Mesh", "Position", "Rotation", "Scale"}, "a node");
-            ModelNode node;
-            node.Name = n.value("Name", std::string());
-            node.Parent = n.contains("Parent") && n["Parent"].is_number_integer() ? n["Parent"].get<int>() : -1;
-            if (node.Parent >= int(data->Nodes.size())) {
-                Log::Warn("{}: node '{}' has a parent that comes after it (ignored)", name, node.Name);
-                node.Parent = -1;
-            }
-            const std::string mesh = n.value("Mesh", std::string());
-            if (!mesh.empty()) {
-                auto found = meshIndex.find(mesh);
-                if (found != meshIndex.end())
-                    node.Mesh = found->second;
-                else
-                    Log::Warn("{}: node '{}' uses the mesh '{}', which does not exist", name, node.Name, mesh);
-            }
-            node.Position = r.Vector(n, "Position", {0, 0, 0});
-            node.Rotation = r.Rotation(n, "Rotation");
-            node.Scale = r.Vector(n, "Scale", {1, 1, 1});
-            if (!node.Name.empty()) nodeIndex[node.Name] = int(data->Nodes.size());
-            data->Nodes.push_back(std::move(node));
-        }
-    // A file with meshes and no nodes shows every mesh at the origin.
-    if (data->Nodes.empty())
-        for (int i = 0; i < int(data->Meshes.size()); ++i) {
-            ModelNode node;
-            node.Mesh = i;
-            data->Nodes.push_back(node);
-        }
-
-    auto nodeNamed = [&](const std::string& n, std::string_view where) {
-        auto found = nodeIndex.find(n);
-        if (found == nodeIndex.end()) {
-            Log::Warn("{}: {} names the node '{}', which does not exist", name, where, n);
-            return -1;
-        }
-        return found->second;
-    };
-
-    if (json.contains("Animations") && json["Animations"].is_object())
-        for (auto& [key, a] : json["Animations"].items()) {
-            const std::string where = "animation " + key;
-            r.Unknown(a, {"Duration", "Loop", "Tracks", "Events"}, where);
-            ModelAnimationData animation;
-            animation.Loop = a.value("Loop", true);
-            float last = 0;
-            if (a.contains("Tracks") && a["Tracks"].is_array())
-                for (const Json& t : a["Tracks"]) {
-                    r.Unknown(t, {"Node", "Property", "Interpolation", "Times", "Values"}, where);
-                    ModelTrack track;
-                    track.Node = nodeNamed(t.value("Node", std::string()), where);
-                    const std::string property = t.value("Property", std::string());
-                    if (property == "Position")
-                        track.Property = TrackProperty::Position;
-                    else if (property == "Rotation")
-                        track.Property = TrackProperty::Rotation;
-                    else if (property == "Scale")
-                        track.Property = TrackProperty::Scale;
-                    else {
-                        Log::Warn("{}: {}: Property must be Position, Rotation or Scale, not '{}'", name, where,
-                                  property);
-                        continue;
-                    }
-                    track.Step = t.value("Interpolation", std::string("Linear")) == "Step";
-                    track.Times = r.Numbers(t, "Times", where);
-                    track.Values = r.Numbers(t, "Values", where);
-                    const std::size_t width = track.Property == TrackProperty::Rotation ? 4 : 3;
-                    if (track.Node < 0 || track.Times.empty() || track.Values.size() != track.Times.size() * width) {
-                        if (track.Node >= 0) Log::Warn("{}: {}: a track needs {} Values per time", name, where, width);
-                        continue;
-                    }
-                    if (!std::is_sorted(track.Times.begin(), track.Times.end()))
-                        Log::Warn("{}: {}: Times must grow", name, where);
-                    if (track.Property == TrackProperty::Rotation)
-                        for (std::size_t i = 0; i < track.Values.size(); i += 4) {
-                            Quat q =
-                                Quat{track.Values[i], track.Values[i + 1], track.Values[i + 2], track.Values[i + 3]}
-                                    .Normalized();
-                            track.Values[i] = q.X, track.Values[i + 1] = q.Y, track.Values[i + 2] = q.Z,
-                            track.Values[i + 3] = q.W;
-                        }
-                    last = std::max(last, track.Times.back());
-                    animation.Tracks.push_back(std::move(track));
-                }
-            animation.Duration = a.contains("Duration") ? r.Number(a["Duration"], last) : last;
-            if (a.contains("Events") && a["Events"].is_object())
-                for (auto& [event, times] : a["Events"].items())
-                    if (times.is_array())
-                        for (const Json& time : times)
-                            if (time.is_number()) animation.Events.emplace_back(event, time.get<float>());
-            data->Animations[key] = std::move(animation);
-        }
-
-    if (json.contains("Sockets") && json["Sockets"].is_object())
-        for (auto& [key, s] : json["Sockets"].items()) {
-            r.Unknown(s, {"Node", "Position", "Rotation"}, "socket " + key);
-            const int node = nodeNamed(s.value("Node", std::string()), "socket " + key);
-            if (node < 0) continue;
-            data->Sockets[key] = {node, r.Vector(s, "Position", {0, 0, 0}), r.Rotation(s, "Rotation")};
-        }
-    return data;
 }
 
 } // namespace Detail
@@ -520,9 +269,9 @@ Model Model::Load(const std::filesystem::path& path) {
 }
 
 Model Model::Parse(std::string_view json, const std::filesystem::path& folder, std::string_view name) {
-    Model model;
-    model.Data = Detail::ParseModel(json, folder, name);
-    return model;
+    const std::optional<ModelFile> file = ModelFile::Parse(json, name);
+    if (!file) return {};
+    return FromFile(*file, folder, name);
 }
 
 Model Model::FromMesh(const Mesh& mesh, const Material& material) {
