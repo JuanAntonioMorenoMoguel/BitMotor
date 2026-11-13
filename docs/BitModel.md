@@ -127,7 +127,9 @@ encima, y un juego o una herramienta pueden usar lo mismo:
 - `Modeling::` (`include/BitMotor/Render/Modeling.h`): primitivas, ediciones de malla por caras (extruir,
   insetar, subdividir, espejo, pintar, UV de paleta...), cambios del modelo que mantienen las referencias
   (renombrar, quitar nodos, cambiar de padre), claves de animación, `Pose` sin crear el modelo, `Check` (lo que
-  estaría mal) e importar y exportar OBJ con su MTL.
+  estaría mal) e importar y exportar OBJ con su MTL y glTF 2.0 (`ImportGltf` lee `.glb` y `.gltf`; `ExportGlb`
+  escribe `.glb`, con los sockets y los eventos en sus `extras` para que vuelvan al importarlo). Lo que BitMotor no
+  dibuja (huesos, morph targets, mapas PBR, curvas cúbicas) se deja fuera o se aproxima y queda en `Notes`.
 
 ```cpp
 ModelFile file;
